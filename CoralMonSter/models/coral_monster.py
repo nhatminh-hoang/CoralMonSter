@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import random
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -63,10 +64,14 @@ class CoralMonSter(nn.Module):
         masks = batch.get("masks")
         batch_size = images.shape[0]
 
+        enc_start = time.time()
         image_embeddings = self.image_encoder(images)
+        encoder_time = time.time() - enc_start
         image_pe = self._image_pe(batch_size, images.device)
 
+        student_start = time.time()
         student_out = self.student_decoder(image_embeddings, image_pe)
+        student_time = time.time() - student_start
         logits = F.interpolate(
             student_out["mask_logits"],
             size=masks.shape[-2:] if masks is not None else (self.cfg.image_size, self.cfg.image_size),
@@ -75,6 +80,7 @@ class CoralMonSter(nn.Module):
         )
 
         losses: Dict[str, torch.Tensor] = {}
+        teacher_time = 0.0
         if masks is not None:
             masks = masks.to(images.device)
             losses["seg_loss"] = self.seg_loss(logits, masks)
@@ -83,6 +89,7 @@ class CoralMonSter(nn.Module):
                     batch.get("prompt_sets"), images.device
                 )
                 if teacher_points is not None:
+                    teacher_start = time.time()
                     teacher_out = self._teacher_forward(
                         image_embeddings,
                         image_pe,
@@ -90,6 +97,7 @@ class CoralMonSter(nn.Module):
                         teacher_labels,
                         batch.get("boxes"),
                     )
+                    teacher_time = time.time() - teacher_start
                     student_coral = torch.softmax(logits, dim=1)[:, 1:, :, :].sum(dim=1, keepdim=True)
                     mask_kd = mask_distillation_loss(student_coral, teacher_out["mask_prob"])
                     losses["mask_kd_loss"] = mask_kd * self.cfg.distillation.mask_kd_weight
@@ -109,7 +117,13 @@ class CoralMonSter(nn.Module):
         total_loss = (
             torch.stack([v for v in losses.values()]).sum() if losses else torch.tensor(0.0, device=self.device)
         )
-        outputs = {"logits": logits, "total_loss": total_loss}
+        outputs = {
+            "logits": logits,
+            "total_loss": total_loss,
+            "encoder_time": encoder_time,
+            "student_time": student_time,
+            "teacher_time": teacher_time,
+        }
         outputs.update(losses)
         return outputs
 

@@ -26,9 +26,10 @@ from CoralMonSter.utils import (
 
 
 class CoralTrainer:
-    def __init__(self, model: CoralMonSter, cfg: HKCoralConfig) -> None:
+    def __init__(self, model: CoralMonSter, cfg: HKCoralConfig, enable_profile: bool = False) -> None:
         self.model = model
         self.cfg = cfg
+        self.enable_profile = enable_profile
         self.optimizer = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, self.model.parameters()),
             lr=cfg.optimization.learning_rate,
@@ -51,6 +52,7 @@ class CoralTrainer:
         test_loader: Optional[DataLoader] = None,
     ) -> Path:
         device = next(self.model.parameters()).device
+        profiled = False
         for epoch in range(self.cfg.optimization.max_epochs):
             momentum = self._compute_ema_momentum(epoch)
             if hasattr(self.model, "set_momentum"):
@@ -60,7 +62,13 @@ class CoralTrainer:
                 self.model.set_teacher_temperature(teacher_temp)
             self.model.train()
             start = time.time()
-            train_loss, train_miou, train_pix_acc = self._train_one_epoch(train_loader, device, epoch)
+            train_loss, train_miou, train_pix_acc = self._train_one_epoch(
+                train_loader,
+                device,
+                epoch,
+                profile_batch=(self.enable_profile and not profiled),
+            )
+            profiled = profiled or self.enable_profile
             duration = time.time() - start
             val_metrics = {"loss": 0.0, "miou": 0.0, "pix_acc": 0.0, "preview": None}
             if val_loader is not None:
@@ -118,7 +126,13 @@ class CoralTrainer:
             )
         return self.best_model_path if self.best_miou > 0 else None
 
-    def _train_one_epoch(self, loader: DataLoader, device: torch.device, epoch: int) -> tuple[float, float, float]:
+    def _train_one_epoch(
+        self,
+        loader: DataLoader,
+        device: torch.device,
+        epoch: int,
+        profile_batch: bool = False,
+    ) -> tuple[float, float, float]:
         loss_sum = 0.0
         count = 0
         meter = SegmentationMeter(self.cfg.num_classes, self.cfg.ignore_label)
@@ -127,10 +141,13 @@ class CoralTrainer:
             desc=f"Epoch {epoch+1}/{self.cfg.optimization.max_epochs}",
             leave=False,
         )
+        profiled = False
         for batch in progress:
+            io_start = time.time()
             batch = self._to_device(batch, device)
+            data_io = time.time() - io_start
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
-                outputs = self.model.forward(batch)
+                outputs = self.model(batch)
             loss = outputs["total_loss"]
             loss.backward()
             torch.nn.utils.clip_grad_norm_(
@@ -157,6 +174,17 @@ class CoralTrainer:
                     loss_postfix[f"loss_{label}"] = f"{outputs[key].item():.4f}"
             progress.set_postfix(**loss_postfix)
 
+            if profile_batch and not profiled:
+                teacher_time = outputs.get("teacher_time", 0.0)
+                encoder_time = outputs.get("encoder_time", 0.0)
+                student_time = outputs.get("student_time", 0.0)
+                print(
+                    f"[PROFILE] Data IO={data_io*1000:.2f} ms | "
+                    f"Image Encoder={encoder_time*1000:.2f} ms | "
+                    f"Student Decoder={student_time*1000:.2f} ms | "
+                    f"Teacher Decoder={teacher_time*1000:.2f} ms"
+                )
+                profiled = True
         return loss_sum / max(count, 1), meter.mean_iou(), meter.pixel_accuracy()
 
     @torch.no_grad()

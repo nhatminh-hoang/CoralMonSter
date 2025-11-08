@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=str, default="checkpoints")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--profile", action="store_true", help="Profile a single forward/backward pass.")
     return parser.parse_args()
 
 
@@ -142,7 +143,7 @@ def main() -> None:
         collate_fn=hkcoral_collate_fn,
     )
 
-    trainer = CoralTrainer(model, cfg)
+    trainer = CoralTrainer(model, cfg, enable_profile=args.profile)
     best_path = trainer.fit(train_loader, val_loader, test_loader)
 
     final_path = cfg.save_dir / f"{cfg.model_type}_coralmonster_last.pth"
