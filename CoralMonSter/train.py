@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image_size", type=int, default=1024)
     parser.add_argument("--scenario_name", type=str, default="default")
     parser.add_argument("--batch_size", type=int, default=2)
-    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--max_epochs", type=int, default=40)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.01)
@@ -49,6 +49,7 @@ def main() -> None:
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.cuda.set_device(args.gpu) if device.type == "cuda" else None
+    torch.set_float32_matmul_precision("high") if device.type == "cuda" else None
 
     inferred_model_type = infer_model_type_from_checkpoint(args.sam_checkpoint)
     model_type = args.model_type or inferred_model_type or "vit_h"
@@ -81,6 +82,7 @@ def main() -> None:
     cfg.checkpoint_root = Path(args.output_dir)
 
     model = CoralModel(cfg).to(device)
+    # model = torch.compile(model) if torch.__version__ >= "2.0.0" else model
     if args.resume:
         state = torch.load(args.resume, map_location="cpu")
         model.load_state_dict(state.get("model", state), strict=False)

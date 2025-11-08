@@ -6,6 +6,7 @@
 
 import torch
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 import math
 from typing import Tuple, Type
@@ -227,13 +228,16 @@ class Attention(nn.Module):
         v = self._separate_heads(v, self.num_heads)
 
         # Attention
-        _, _, _, c_per_head = q.shape
-        attn = q @ k.permute(0, 1, 3, 2)  # B x N_heads x N_tokens x N_tokens
-        attn = attn / math.sqrt(c_per_head)
-        attn = torch.softmax(attn, dim=-1)
+        # _, _, _, c_per_head = q.shape
+        # attn = q @ k.permute(0, 1, 3, 2)  # B x N_heads x N_tokens x N_tokens
+        # attn = attn / math.sqrt(c_per_head)
+        # attn = torch.softmax(attn, dim=-1)
 
-        # Get output
-        out = attn @ v
+        # # Get output
+        # out = attn @ v
+
+        # Using flash attention
+        out = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
         out = self._recombine_heads(out)
         out = self.out_proj(out)
 
