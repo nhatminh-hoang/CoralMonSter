@@ -53,6 +53,10 @@ class CoralMonSter(nn.Module):
         self.student_token_proj = nn.Linear(self.student_decoder.transformer_dim, 256)
         self.teacher_token_proj = nn.Identity()
         self.teacher_temperature = self.cfg.distillation.teacher_temperature_start
+        self.register_buffer(
+            "teacher_center",
+            torch.zeros(self.student_decoder.transformer_dim, dtype=torch.float32),
+        )
 
     def forward(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         images = batch["images"].to(self.device)
@@ -92,13 +96,15 @@ class CoralMonSter(nn.Module):
 
                     student_tokens = self.student_token_proj(student_out["token_embeddings"]).mean(dim=1)
                     teacher_tokens = self.teacher_token_proj(teacher_out["token_features"])
+                    centered_teacher = teacher_tokens - self.teacher_center
                     token_kd = token_kl_divergence(
                         student_tokens,
-                        teacher_tokens,
+                        centered_teacher,
                         student_temp=self.cfg.distillation.student_temperature,
                         teacher_temp=self.teacher_temperature,
                     )
                     losses["token_kd_loss"] = token_kd * self.cfg.distillation.token_kd_weight
+                    self._update_teacher_center(teacher_tokens.detach())
 
         total_loss = (
             torch.stack([v for v in losses.values()]).sum() if losses else torch.tensor(0.0, device=self.device)
@@ -213,6 +219,12 @@ class CoralMonSter(nn.Module):
 
     def set_teacher_temperature(self, value: float) -> None:
         self.teacher_temperature = float(value)
+
+    @torch.no_grad()
+    def _update_teacher_center(self, teacher_tokens: torch.Tensor) -> None:
+        center_m = self.cfg.distillation.center_momentum
+        batch_center = teacher_tokens.mean(dim=0)
+        self.teacher_center.mul_(center_m).add_(batch_center, alpha=1 - center_m)
 
     def _build_sam_backbone(self):
         checkpoint_path = self.cfg.sam_checkpoint

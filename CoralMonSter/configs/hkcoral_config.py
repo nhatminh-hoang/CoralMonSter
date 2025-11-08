@@ -39,6 +39,7 @@ class DistillationConfig:
     teacher_temperature_start: float = 0.04
     teacher_temperature_end: float = 0.07
     teacher_temperature_warmup_epochs: int = 30
+    center_momentum: float = 0.99
     prompt_points: int = 8
     prompt_use_box: bool = True
 
