@@ -3,21 +3,22 @@
 #SBATCH --job-name=SSP_train_encoder_decoder_ADReSS2020
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --partition=dgx-small
-#SBATCH --cpus-per-task=8
-#SBATCH --output=train_outs/small/out/%x.%j.out
-#SBATCH --error=train_outs/small/errors/%x.%j.err
+#SBATCH --partition=gpu
+#SBATCH --nodelist=hpc24
+#SBATCH --cpus-per-task=32
+#SBATCH --output=train_outs/gpu/out/%x.%j.out
+#SBATCH --error=train_outs/gpu/errors/%x.%j.err
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=21013299@st.phenikaa-uni.edu.vn
 
 conda init bash
 source ~/.bashrc
-conda activate minh_ml
+conda activate gpu_11.8
 
 CHECKPOINT="checkpoints/vit_b_coralscop.pth"
 DATASET_ROOT="datasets/HKCoral"
 MAX_EPOCHS=40
-BATCH_SIZE=8
+BATCH_SIZE=2
 GPU_DEVICES="0"
 export CUDA_VISIBLE_DEVICES=${GPU_DEVICES}
 
