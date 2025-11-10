@@ -54,6 +54,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--profile", action="store_true", help="Profile a single forward/backward pass.")
+    parser.add_argument(
+        "--gpu_devices",
+        type=str,
+        default=None,
+        help="Comma-separated list of GPU device indices to use (e.g., '5,6,7').",
+    )
     parser.add_argument("--distributed", action="store_true", help="Enable DistributedDataParallel training.")
     parser.add_argument("--dist_backend", type=str, default="nccl")
     parser.add_argument("--dist_url", type=str, default="env://")
@@ -94,6 +100,8 @@ def get_model_state(model: torch.nn.Module) -> dict:
 
 def main() -> None:
     args = parse_args()
+    if args.gpu_devices and "CUDA_VISIBLE_DEVICES" not in os.environ:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_devices
     distributed = init_distributed_mode(args)
     if distributed:
         device = torch.device("cuda", args.local_rank)
