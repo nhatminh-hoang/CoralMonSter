@@ -21,6 +21,9 @@ class OptimizationConfig:
     ema_momentum_min: float = 0.996
     ema_momentum_max: float = 1.0
     grad_clip_norm: float = 1.0
+    use_lr_scheduler: bool = True
+    lr_warmup_epochs: int = 5
+    lr_min_factor: float = 0.1
 
 
 @dataclass

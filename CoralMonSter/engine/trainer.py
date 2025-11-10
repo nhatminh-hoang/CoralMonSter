@@ -35,6 +35,12 @@ class CoralTrainer:
             lr=cfg.optimization.learning_rate,
             weight_decay=cfg.optimization.weight_decay,
         )
+        self.scheduler = None
+        if self.cfg.optimization.use_lr_scheduler:
+            self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+                self.optimizer,
+                lr_lambda=self._lr_schedule,
+            )
         self.log_dir = Path(self.cfg.log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.history = []
@@ -111,6 +117,8 @@ class CoralTrainer:
                 f"train_pixAcc={train_pix_acc:.4f}, val_pixAcc={val_metrics['pix_acc']:.4f}"
             )
             print(message)
+            if self.scheduler is not None:
+                self.scheduler.step()
 
         if test_loader is not None:
             test_metrics = self.evaluate(test_loader, device)
@@ -247,6 +255,19 @@ class CoralTrainer:
         warmup = max(1, self.cfg.distillation.teacher_temperature_warmup_epochs)
         progress = min((epoch_idx + 1) / warmup, 1.0)
         return start + (end - start) * progress
+
+    def _lr_schedule(self, current_step: int) -> float:
+        total_epochs = max(1, self.cfg.optimization.max_epochs)
+        warmup_epochs = max(1, self.cfg.optimization.lr_warmup_epochs)
+        epoch = current_step
+
+        if epoch < warmup_epochs:
+            return (epoch + 1) / warmup_epochs
+
+        progress = (epoch - warmup_epochs + 1) / max(1, total_epochs - warmup_epochs)
+        min_factor = self.cfg.optimization.lr_min_factor
+        cosine = 0.5 * (1 + math.sin(math.pi * (progress - 0.5)))
+        return min_factor + (1 - min_factor) * cosine
 
     def _setup_logger(self) -> None:
         self.logger = logging.getLogger(f"CoralTrainer_{self.cfg.scenario_name}")
