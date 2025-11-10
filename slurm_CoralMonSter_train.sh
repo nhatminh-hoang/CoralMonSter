@@ -22,36 +22,6 @@ BATCH_SIZE=2
 GPU_DEVICES="0"
 export CUDA_VISIBLE_DEVICES=${GPU_DEVICES}
 
-# echo "===> Running scenario: full"
-# python -m CoralMonSter.train \
-#   --gpu_devices "${GPU_DEVICES}" \
-#   --scenario_name "scen_full" \
-#   --scenario_preset "full" \
-#   --sam_checkpoint "${CHECKPOINT}" \
-#   --dataset_root "${DATASET_ROOT}" \
-#   --max_epochs "${MAX_EPOCHS}" \
-#   --batch_size "${BATCH_SIZE}"
-
-# echo "===> Running scenario: no_scheduler"
-# python -m CoralMonSter.train \
-#   --gpu_devices "${GPU_DEVICES}" \
-#   --scenario_name "scen_no_scheduler" \
-#   --scenario_preset "no_scheduler" \
-#   --sam_checkpoint "${CHECKPOINT}" \
-#   --dataset_root "${DATASET_ROOT}" \
-#   --max_epochs "${MAX_EPOCHS}" \
-#   --batch_size "${BATCH_SIZE}"
-
-# echo "===> Running scenario: no_centering"
-# python -m CoralMonSter.train \
-#   --gpu_devices "${GPU_DEVICES}" \
-#   --scenario_name "scen_no_centering" \
-#   --scenario_preset "no_centering" \
-#   --sam_checkpoint "${CHECKPOINT}" \
-#   --dataset_root "${DATASET_ROOT}" \
-#   --max_epochs "${MAX_EPOCHS}" \
-#   --batch_size "${BATCH_SIZE}"
-
 echo "===> Running scenario: unfrozen_encoder"
 python -m CoralMonSter.train \
   --gpu_devices "${GPU_DEVICES}" \
