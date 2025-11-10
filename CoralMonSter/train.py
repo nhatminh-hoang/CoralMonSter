@@ -10,9 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
 
 from CoralMonSter import CoralMonSter as CoralModel
 from CoralMonSter import CoralTrainer, HKCoralConfig
@@ -60,56 +58,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Comma-separated list of GPU device indices to use (e.g., '5,6,7').",
     )
-    parser.add_argument("--distributed", action="store_true", help="Enable DistributedDataParallel training.")
-    parser.add_argument("--dist_backend", type=str, default="nccl")
-    parser.add_argument("--dist_url", type=str, default="env://")
     return parser.parse_args()
-
-
-def init_distributed_mode(args: argparse.Namespace) -> bool:
-    args.local_rank = int(os.environ.get("LOCAL_RANK", args.gpu))
-    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        args.rank = int(os.environ["RANK"])
-        args.world_size = int(os.environ["WORLD_SIZE"])
-    elif args.distributed:
-        raise ValueError("Distributed training requested but RANK/WORLD_SIZE are not set.")
-    else:
-        args.rank = 0
-        args.world_size = 1
-        return False
-
-    dist.init_process_group(
-        backend=args.dist_backend,
-        init_method=args.dist_url,
-        world_size=args.world_size,
-        rank=args.rank,
-    )
-    torch.cuda.set_device(args.local_rank)
-    return True
-
-
-def is_main_process() -> bool:
-    return not dist.is_available() or not dist.is_initialized() or dist.get_rank() == 0
-
-
-def get_model_state(model: torch.nn.Module) -> dict:
-    if isinstance(model, DDP):
-        return model.module.state_dict()
-    return model.state_dict()
 
 
 def main() -> None:
     args = parse_args()
     if args.gpu_devices and "CUDA_VISIBLE_DEVICES" not in os.environ:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_devices
-    distributed = init_distributed_mode(args)
-    if distributed:
-        device = torch.device("cuda", args.local_rank)
-    else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if device.type == "cuda":
-            torch.cuda.set_device(args.gpu)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type == "cuda":
+        torch.cuda.set_device(args.gpu)
         torch.set_float32_matmul_precision("high")
 
     inferred_model_type = infer_model_type_from_checkpoint(args.sam_checkpoint)
@@ -186,15 +144,12 @@ def main() -> None:
         mean=cfg.image_mean,
         std=cfg.image_std,
     )
-    train_sampler = DistributedSampler(train_dataset, shuffle=True) if distributed else None
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.optimization.batch_size,
-        shuffle=train_sampler is None,
-        sampler=train_sampler,
+        shuffle=True,
         num_workers=cfg.optimization.num_workers,
         collate_fn=hkcoral_collate_fn,
-        pin_memory=True,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -211,37 +166,22 @@ def main() -> None:
         collate_fn=hkcoral_collate_fn,
     )
 
-    if distributed:
-        model = DDP(
-            model,
-            device_ids=[args.local_rank],
-            output_device=args.local_rank,
-            find_unused_parameters=True,
-        )
-
     trainer = CoralTrainer(
         model,
         cfg,
         enable_profile=args.profile,
-        distributed=distributed,
-        local_rank=getattr(args, "local_rank", 0),
     )
     best_path = trainer.fit(
         train_loader,
         val_loader,
         test_loader,
-        train_sampler=train_sampler,
     )
 
     final_path = cfg.save_dir / f"{cfg.model_type}_coralmonster_last.pth"
-    if is_main_process():
-        save_checkpoint({"model": get_model_state(model)}, final_path)
-        print(f"Final checkpoint saved to {final_path}")
-        if best_path:
-            print(f"Best mIoU checkpoint saved to {best_path}")
-
-    if distributed:
-        dist.destroy_process_group()
+    save_checkpoint({"model": model.state_dict()}, final_path)
+    print(f"Final checkpoint saved to {final_path}")
+    if best_path:
+        print(f"Best mIoU checkpoint saved to {best_path}")
 
 
 if __name__ == "__main__":

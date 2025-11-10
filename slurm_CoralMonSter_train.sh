@@ -18,13 +18,11 @@ CHECKPOINT="checkpoints/vit_b_coralscop.pth"
 DATASET_ROOT="datasets/HKCoral"
 MAX_EPOCHS=40
 BATCH_SIZE=8
-NUM_GPUS=3
-GPU_DEVICES="5,6,7"
+GPU_DEVICES="0"
 export CUDA_VISIBLE_DEVICES=${GPU_DEVICES}
 
 echo "===> Running scenario: full"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12355 -m CoralMonSter.train \
-  --distributed \
+python -m CoralMonSter.train \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_full" \
   --scenario_preset "full" \
@@ -34,8 +32,7 @@ torchrun --nproc_per_node=${NUM_GPUS} --master_port=12355 -m CoralMonSter.train 
   --batch_size "${BATCH_SIZE}"
 
 echo "===> Running scenario: no_scheduler"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12356 -m CoralMonSter.train \
-  --distributed \
+python -m CoralMonSter.train \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_no_scheduler" \
   --scenario_preset "no_scheduler" \
@@ -45,8 +42,7 @@ torchrun --nproc_per_node=${NUM_GPUS} --master_port=12356 -m CoralMonSter.train 
   --batch_size "${BATCH_SIZE}"
 
 echo "===> Running scenario: no_centering"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12357 -m CoralMonSter.train \
-  --distributed \
+python -m CoralMonSter.train \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_no_centering" \
   --scenario_preset "no_centering" \
@@ -56,8 +52,7 @@ torchrun --nproc_per_node=${NUM_GPUS} --master_port=12357 -m CoralMonSter.train 
   --batch_size "${BATCH_SIZE}"
 
 echo "===> Running scenario: unfrozen_encoder"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12358 -m CoralMonSter.train \
-  --distributed \
+python -m CoralMonSter.train \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_unfrozen_encoder" \
   --scenario_preset "unfrozen_encoder" \
@@ -67,8 +62,7 @@ torchrun --nproc_per_node=${NUM_GPUS} --master_port=12358 -m CoralMonSter.train 
   --batch_size "${BATCH_SIZE}"
 
 echo "===> Running scenario: no_momentum"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12359 -m CoralMonSter.train \
-  --distributed \
+python -m CoralMonSter.train \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_no_momentum" \
   --scenario_preset "no_momentum" \
