@@ -97,7 +97,7 @@ class CoralTrainer:
                     )
                 if val_metrics["miou"] > self.best_miou:
                     self.best_miou = val_metrics["miou"]
-                    save_checkpoint({"model": self._model_state_dict()}, self.best_model_path)
+                    save_checkpoint({"model": self.model.state_dict()}, self.best_model_path)
             metrics = {
                 "epoch": epoch + 1,
                 "train_loss": train_loss,
