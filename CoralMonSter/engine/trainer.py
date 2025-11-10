@@ -26,10 +26,20 @@ from CoralMonSter.utils import (
 
 
 class CoralTrainer:
-    def __init__(self, model: CoralMonSter, cfg: HKCoralConfig, enable_profile: bool = False) -> None:
+    def __init__(
+        self,
+        model: CoralMonSter,
+        cfg: HKCoralConfig,
+        enable_profile: bool = False,
+        distributed: bool = False,
+        local_rank: int = 0,
+    ) -> None:
         self.model = model
         self.cfg = cfg
         self.enable_profile = enable_profile
+        self.distributed = distributed
+        self.local_rank = local_rank
+        self.is_main = (not distributed) or local_rank == 0
         self.optimizer = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, self.model.parameters()),
             lr=cfg.optimization.learning_rate,
@@ -42,7 +52,8 @@ class CoralTrainer:
                 lr_lambda=self._lr_schedule,
             )
         self.log_dir = Path(self.cfg.log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+        if self.is_main:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
         self.history = []
         self.best_miou = 0.0
         self.best_model_path = self.cfg.save_dir / f"{self.cfg.model_type}_coralmonster.pth"
@@ -56,10 +67,13 @@ class CoralTrainer:
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
         test_loader: Optional[DataLoader] = None,
+        train_sampler: Optional[torch.utils.data.Sampler] = None,
     ) -> Path:
         device = next(self.model.parameters()).device
         profiled = False
         for epoch in range(self.cfg.optimization.max_epochs):
+            if train_sampler is not None:
+                train_sampler.set_epoch(epoch)
             momentum = self._compute_ema_momentum(epoch)
             if hasattr(self.model, "set_momentum"):
                 self.model.set_momentum(momentum)
@@ -77,7 +91,7 @@ class CoralTrainer:
             profiled = profiled or self.enable_profile
             duration = time.time() - start
             val_metrics = {"loss": 0.0, "miou": 0.0, "pix_acc": 0.0, "preview": None}
-            if val_loader is not None:
+            if val_loader is not None and self.is_main:
                 val_metrics = self.evaluate(val_loader, device)
                 self.last_val_loss = val_metrics["loss"]
                 self.last_val_miou = val_metrics["miou"]
@@ -97,44 +111,46 @@ class CoralTrainer:
                     )
                 if val_metrics["miou"] > self.best_miou:
                     self.best_miou = val_metrics["miou"]
-                    save_checkpoint({"model": self.model.state_dict()}, self.best_model_path)
-            metrics = {
-                "epoch": epoch + 1,
-                "train_loss": train_loss,
-                "val_loss": val_metrics["loss"],
-                "train_miou": train_miou,
-                "val_miou": val_metrics["miou"],
-                "train_pix_acc": train_pix_acc,
-                "val_pix_acc": val_metrics["pix_acc"],
-                "duration_sec": duration,
-            }
-            self.history.append(metrics)
-            self._log_metrics(metrics)
-            save_training_curves(self.history, self.log_dir / "training_curves.png")
-            message = (
-                f"Epoch {epoch+1}/{self.cfg.optimization.max_epochs} "
-                f"- train_loss={train_loss:.4f}, val_loss={val_metrics['loss']:.4f}, "
-                f"train_mIoU={train_miou:.4f}, val_mIoU={val_metrics['miou']:.4f}, "
-                f"train_pixAcc={train_pix_acc:.4f}, val_pixAcc={val_metrics['pix_acc']:.4f}"
-            )
-            print(message)
+                    save_checkpoint({"model": self._model_state_dict()}, self.best_model_path)
+            if self.is_main:
+                metrics = {
+                    "epoch": epoch + 1,
+                    "train_loss": train_loss,
+                    "val_loss": val_metrics["loss"],
+                    "train_miou": train_miou,
+                    "val_miou": val_metrics["miou"],
+                    "train_pix_acc": train_pix_acc,
+                    "val_pix_acc": val_metrics["pix_acc"],
+                    "duration_sec": duration,
+                }
+                self.history.append(metrics)
+                self._log_metrics(metrics)
+                save_training_curves(self.history, self.log_dir / "training_curves.png")
+                message = (
+                    f"Epoch {epoch+1}/{self.cfg.optimization.max_epochs} "
+                    f"- train_loss={train_loss:.4f}, val_loss={val_metrics['loss']:.4f}, "
+                    f"train_mIoU={train_miou:.4f}, val_mIoU={val_metrics['miou']:.4f}, "
+                    f"train_pixAcc={train_pix_acc:.4f}, val_pixAcc={val_metrics['pix_acc']:.4f}"
+                )
+                print(message)
             if self.scheduler is not None:
                 self.scheduler.step()
 
-        if test_loader is not None:
+        if test_loader is not None and self.is_main:
             test_vis_dir = self.log_dir / "test_visuals"
             test_metrics = self.evaluate(test_loader, device, visualize_dir=test_vis_dir)
-            self.logger.info(
-                "Test | loss=%.4f | mIoU=%.4f | pixAcc=%.4f",
-                test_metrics["loss"],
-                test_metrics["miou"],
-                test_metrics["pix_acc"],
-            )
+            if self.logger:
+                self.logger.info(
+                    "Test | loss=%.4f | mIoU=%.4f | pixAcc=%.4f",
+                    test_metrics["loss"],
+                    test_metrics["miou"],
+                    test_metrics["pix_acc"],
+                )
             print(
                 f"Test set - loss={test_metrics['loss']:.4f}, "
                 f"mIoU={test_metrics['miou']:.4f}, pixAcc={test_metrics['pix_acc']:.4f}"
             )
-        return self.best_model_path if self.best_miou > 0 else None
+        return self.best_model_path if (self.is_main and self.best_miou > 0) else None
 
     def _train_one_epoch(
         self,
@@ -150,6 +166,7 @@ class CoralTrainer:
             loader,
             desc=f"Epoch {epoch+1}/{self.cfg.optimization.max_epochs}",
             leave=False,
+            disable=not self.is_main,
         )
         profiled = False
         for batch in progress:
@@ -184,7 +201,7 @@ class CoralTrainer:
                     loss_postfix[f"loss_{label}"] = f"{outputs[key].item():.4f}"
             progress.set_postfix(**loss_postfix)
 
-            if profile_batch and not profiled:
+            if profile_batch and not profiled and self.is_main:
                 teacher_time = outputs.get("teacher_time", 0.0)
                 encoder_time = outputs.get("encoder_time", 0.0)
                 student_time = outputs.get("student_time", 0.0)
@@ -204,6 +221,8 @@ class CoralTrainer:
         device: torch.device,
         visualize_dir: Optional[Path] = None,
     ) -> Dict[str, object]:
+        if self.distributed and not self.is_main:
+            return {"loss": 0.0, "miou": 0.0, "pix_acc": 0.0, "preview": None}
         self.model.eval()
         loss_sum = 0.0
         count = 0
@@ -293,6 +312,9 @@ class CoralTrainer:
         return min_factor + (1 - min_factor) * cosine
 
     def _setup_logger(self) -> None:
+        if not self.is_main:
+            self.logger = None
+            return
         self.logger = logging.getLogger(f"CoralTrainer_{self.cfg.scenario_name}")
         self.logger.setLevel(logging.INFO)
         if not self.logger.handlers:
@@ -302,6 +324,8 @@ class CoralTrainer:
             self.logger.addHandler(handler)
 
     def _log_metrics(self, metrics: Dict[str, float]) -> None:
+        if not self.logger:
+            return
         self.logger.info(
             "Epoch %03d | train_loss=%.4f | val_loss=%.4f | train_mIoU=%.4f | val_mIoU=%.4f | "
             "train_pixAcc=%.4f | val_pixAcc=%.4f",
@@ -316,3 +340,8 @@ class CoralTrainer:
         metrics_path = self.log_dir / "metrics.json"
         with open(metrics_path, "w", encoding="utf-8") as f:
             json.dump(self.history, f, indent=2)
+
+    def _model_state_dict(self) -> Dict[str, torch.Tensor]:
+        if hasattr(self.model, "module"):
+            return self.model.module.state_dict()
+        return self.model.state_dict()
