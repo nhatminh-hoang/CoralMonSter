@@ -23,7 +23,7 @@ GPU_DEVICES="5,6,7"
 export CUDA_VISIBLE_DEVICES=${GPU_DEVICES}
 
 echo "===> Running scenario: full"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12355 python -m CoralMonSter.train \
+torchrun --nproc_per_node=${NUM_GPUS} --master_port=12355 -m CoralMonSter.train \
   --distributed \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_full" \
@@ -34,7 +34,7 @@ torchrun --nproc_per_node=${NUM_GPUS} --master_port=12355 python -m CoralMonSter
   --batch_size "${BATCH_SIZE}"
 
 echo "===> Running scenario: no_scheduler"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12356 python -m CoralMonSter.train \
+torchrun --nproc_per_node=${NUM_GPUS} --master_port=12356 -m CoralMonSter.train \
   --distributed \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_no_scheduler" \
@@ -45,7 +45,7 @@ torchrun --nproc_per_node=${NUM_GPUS} --master_port=12356 python -m CoralMonSter
   --batch_size "${BATCH_SIZE}"
 
 echo "===> Running scenario: no_centering"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12357 python -m CoralMonSter.train \
+torchrun --nproc_per_node=${NUM_GPUS} --master_port=12357 -m CoralMonSter.train \
   --distributed \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_no_centering" \
@@ -56,7 +56,7 @@ torchrun --nproc_per_node=${NUM_GPUS} --master_port=12357 python -m CoralMonSter
   --batch_size "${BATCH_SIZE}"
 
 echo "===> Running scenario: unfrozen_encoder"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12358 python -m CoralMonSter.train \
+torchrun --nproc_per_node=${NUM_GPUS} --master_port=12358 -m CoralMonSter.train \
   --distributed \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_unfrozen_encoder" \
@@ -67,7 +67,7 @@ torchrun --nproc_per_node=${NUM_GPUS} --master_port=12358 python -m CoralMonSter
   --batch_size "${BATCH_SIZE}"
 
 echo "===> Running scenario: no_momentum"
-torchrun --nproc_per_node=${NUM_GPUS} --master_port=12359 python -m CoralMonSter.train \
+torchrun --nproc_per_node=${NUM_GPUS} --master_port=12359 -m CoralMonSter.train \
   --distributed \
   --gpu_devices "${GPU_DEVICES}" \
   --scenario_name "scen_no_momentum" \
