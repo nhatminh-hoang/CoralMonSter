@@ -5,11 +5,12 @@ Visualization helpers for logging CoralMonSter training progress.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, Sequence, Tuple
+from typing import Dict, Iterable, Sequence, Tuple, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from matplotlib.patches import Patch
 
 
 def save_training_curves(history: Iterable[Dict[str, float]], path: Path) -> None:
@@ -64,6 +65,7 @@ def save_segmentation_comparison(
     palette: Sequence[Tuple[int, int, int]],
     path: Path,
     title: str,
+    class_names: Optional[Sequence[str]] = None,
 ) -> None:
     image_np = _tensor_to_image(image, mean, std)
     pred_color = _colorize_mask(prediction.cpu().numpy(), palette)
@@ -85,6 +87,22 @@ def save_segmentation_comparison(
     ax.imshow(pred_color)
     ax.set_title("Prediction")
     ax.axis("off")
+
+    if class_names:
+        handles = []
+        for idx, name in enumerate(class_names):
+            if idx >= len(palette):
+                break
+            color = tuple(c / 255.0 for c in palette[idx])
+            handles.append(Patch(facecolor=color, edgecolor="white", label=name))
+        if handles:
+            plt.legend(
+                handles=handles,
+                loc="lower center",
+                bbox_to_anchor=(0.5, -0.1),
+                ncol=min(len(handles), 4),
+                fontsize=9,
+            )
 
     plt.tight_layout()
     plt.savefig(path, dpi=300)

@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 
 from CoralMonSter import CoralMonSter as CoralModel
 from CoralMonSter import CoralTrainer, HKCoralConfig
+from CoralMonSter.configs.scenarios import SCENARIO_PRESETS, apply_scenario_preset
 from CoralMonSter.data import HKCoralDataset, hkcoral_collate_fn
 from CoralMonSter.utils import save_checkpoint
 
@@ -32,6 +33,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model_type", type=str, default=None, choices=["vit_h", "vit_l", "vit_b"])
     parser.add_argument("--image_size", type=int, default=1024)
     parser.add_argument("--scenario_name", type=str, default="default")
+    parser.add_argument(
+        "--scenario_preset",
+        type=str,
+        choices=sorted(SCENARIO_PRESETS.keys()),
+        default=None,
+        help="Apply a predefined training scenario.",
+    )
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--max_epochs", type=int, default=40)
@@ -64,15 +72,21 @@ def main() -> None:
     elif args.model_type is None and inferred_model_type is None:
         print("[Info] Could not infer backbone from checkpoint name; defaulting to 'vit_h'.")
 
+    scenario_label = args.scenario_name
+    if args.scenario_preset and scenario_label == "default":
+        scenario_label = args.scenario_preset
+
     cfg = HKCoralConfig(
         dataset_root=Path(args.dataset_root),
         split="train",
         image_size=args.image_size,
         model_type=model_type,
         sam_checkpoint=Path(args.sam_checkpoint),
-        scenario_name=args.scenario_name,
+        scenario_name=scenario_label or "default",
     )
     cfg.freeze_image_encoder = True
+    if args.scenario_preset:
+        cfg = apply_scenario_preset(cfg, args.scenario_preset)
     cfg.optimization.batch_size = args.batch_size
     cfg.optimization.num_workers = args.num_workers
     cfg.optimization.max_epochs = args.max_epochs

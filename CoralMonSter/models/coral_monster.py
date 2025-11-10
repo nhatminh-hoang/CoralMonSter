@@ -104,7 +104,10 @@ class CoralMonSter(nn.Module):
 
                     student_tokens = self.student_token_proj(student_out["token_embeddings"]).mean(dim=1)
                     teacher_tokens = self.teacher_token_proj(teacher_out["token_features"])
-                    centered_teacher = teacher_tokens - self.teacher_center
+                    if self.cfg.distillation.center_momentum > 0:
+                        centered_teacher = teacher_tokens - self.teacher_center
+                    else:
+                        centered_teacher = teacher_tokens
                     token_kd = token_kl_divergence(
                         student_tokens,
                         centered_teacher,
@@ -236,6 +239,8 @@ class CoralMonSter(nn.Module):
 
     @torch.no_grad()
     def _update_teacher_center(self, teacher_tokens: torch.Tensor) -> None:
+        if self.cfg.distillation.center_momentum <= 0:
+            return
         center_m = self.cfg.distillation.center_momentum
         batch_center = teacher_tokens.mean(dim=0)
         self.teacher_center.mul_(center_m).add_(batch_center, alpha=1 - center_m)

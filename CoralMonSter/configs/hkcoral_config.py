@@ -24,6 +24,7 @@ class OptimizationConfig:
     use_lr_scheduler: bool = True
     lr_warmup_epochs: int = 5
     lr_min_factor: float = 0.1
+    use_teacher_momentum: bool = True
 
 
 @dataclass
@@ -112,4 +113,16 @@ class HKCoralConfig:
             (0, 128, 0),        # laminar
             (0, 191, 255),      # folliaceous
             (138, 43, 226),     # columnar
+        ]
+
+    @property
+    def class_names(self) -> List[str]:
+        return [
+            "background",
+            "massive",
+            "encrusting",
+            "branching",
+            "laminar",
+            "folliaceous",
+            "columnar",
         ]

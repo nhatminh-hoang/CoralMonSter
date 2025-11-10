@@ -91,6 +91,7 @@ class CoralTrainer:
                         mean=self.cfg.image_mean,
                         std=self.cfg.image_std,
                         palette=self.cfg.class_palette,
+                        class_names=self.cfg.class_names,
                         path=self.log_dir / f"epoch_{epoch+1:03d}_comparison.png",
                         title=preview["file_name"],
                     )
@@ -121,7 +122,8 @@ class CoralTrainer:
                 self.scheduler.step()
 
         if test_loader is not None:
-            test_metrics = self.evaluate(test_loader, device)
+            test_vis_dir = self.log_dir / "test_visuals"
+            test_metrics = self.evaluate(test_loader, device, visualize_dir=test_vis_dir)
             self.logger.info(
                 "Test | loss=%.4f | mIoU=%.4f | pixAcc=%.4f",
                 test_metrics["loss"],
@@ -164,7 +166,7 @@ class CoralTrainer:
             )
             self.optimizer.step()
             self.optimizer.zero_grad()
-            if epoch != 0:
+            if self.cfg.optimization.use_teacher_momentum and epoch != 0:
                 self.model.update_teacher()
 
             batch_size = batch["images"].shape[0]
@@ -196,12 +198,19 @@ class CoralTrainer:
         return loss_sum / max(count, 1), meter.mean_iou(), meter.pixel_accuracy()
 
     @torch.no_grad()
-    def evaluate(self, loader: DataLoader, device: torch.device) -> Dict[str, object]:
+    def evaluate(
+        self,
+        loader: DataLoader,
+        device: torch.device,
+        visualize_dir: Optional[Path] = None,
+    ) -> Dict[str, object]:
         self.model.eval()
         loss_sum = 0.0
         count = 0
         meter = SegmentationMeter(self.cfg.num_classes, self.cfg.ignore_label)
         preview = None
+        if visualize_dir is not None:
+            visualize_dir.mkdir(parents=True, exist_ok=True)
         for batch in loader:
             batch = self._to_device(batch, device)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
@@ -220,6 +229,20 @@ class CoralTrainer:
                         "prediction": preds[0].detach().cpu(),
                         "file_name": batch["file_names"][0],
                     }
+                if visualize_dir is not None:
+                    for i in range(batch_size):
+                        file_stem = Path(batch["file_names"][i]).stem
+                        save_segmentation_comparison(
+                            batch["images"][i].detach().cpu(),
+                            preds[i],
+                            masks[i],
+                            mean=self.cfg.image_mean,
+                            std=self.cfg.image_std,
+                            palette=self.cfg.class_palette,
+                            class_names=self.cfg.class_names,
+                            path=visualize_dir / f"{file_stem}.png",
+                            title=batch["file_names"][i],
+                        )
         return {
             "loss": loss_sum / max(count, 1),
             "miou": meter.mean_iou(),
