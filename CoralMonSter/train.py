@@ -216,7 +216,7 @@ def main() -> None:
             model,
             device_ids=[args.local_rank],
             output_device=args.local_rank,
-            find_unused_parameters=False,
+            find_unused_parameters=True,
         )
 
     trainer = CoralTrainer(
