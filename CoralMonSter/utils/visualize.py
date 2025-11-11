@@ -66,6 +66,8 @@ def save_segmentation_comparison(
     path: Path,
     title: str,
     class_names: Optional[Sequence[str]] = None,
+    prompt_coords: Optional[torch.Tensor] = None,
+    prompt_labels: Optional[torch.Tensor] = None,
 ) -> None:
     image_np = _tensor_to_image(image, mean, std)
     pred_color = _colorize_mask(prediction.cpu().numpy(), palette)
@@ -87,6 +89,25 @@ def save_segmentation_comparison(
     ax.imshow(pred_color)
     ax.set_title("Prediction")
     ax.axis("off")
+
+    if prompt_coords is not None and prompt_coords.numel() > 0:
+        coords = prompt_coords.cpu().numpy()
+        labels = (
+            prompt_labels.cpu().numpy() if prompt_labels is not None else np.ones(coords.shape[0])
+        )
+        color_map = {1: "lime", 0: "red", -1: "yellow"}
+        colors = [color_map.get(int(lbl), "white") for lbl in labels]
+        axes = [plt.subplot(1, 3, i + 1) for i in range(3)]
+        for ax in axes:
+            ax.scatter(
+                coords[:, 0],
+                coords[:, 1],
+                c=colors,
+                marker="o",
+                s=25,
+                edgecolors="black",
+                linewidths=0.5,
+            )
 
     if class_names:
         handles = []
