@@ -80,3 +80,15 @@ def token_kl_divergence(
     log_student = F.log_softmax(student / student_temp, dim=-1)
     soft_teacher = F.softmax(teacher / teacher_temp, dim=-1)
     return F.kl_div(log_student, soft_teacher, reduction="batchmean") * (student_temp ** 2)
+
+
+def token_cross_entropy(
+    student: torch.Tensor,
+    teacher: torch.Tensor,
+    student_temp: float,
+    teacher_temp: float,
+) -> torch.Tensor:
+    log_student = F.log_softmax(student / student_temp, dim=-1)
+    soft_teacher = F.softmax(teacher / teacher_temp, dim=-1)
+    loss = -torch.sum(soft_teacher * log_student, dim=-1).mean()
+    return loss

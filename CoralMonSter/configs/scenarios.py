@@ -37,6 +37,10 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
         "description": "Start EMA/distillation immediately (no warm-up)",
         "momentum_skip_epochs": 0,
     },
+    "token_kd_kl": {
+        "description": "Use KL divergence instead of cross-entropy for token distillation",
+        "token_kd_metric": "kl",
+    },
 }
 
 
@@ -55,6 +59,8 @@ def apply_scenario_preset(cfg: HKCoralConfig, preset_name: str) -> HKCoralConfig
         cfg.distillation.center_momentum = float(preset["center_momentum"])
     if "momentum_skip_epochs" in preset:
         cfg.optimization.momentum_skip_epochs = int(preset["momentum_skip_epochs"])
+    if "token_kd_metric" in preset:
+        cfg.distillation.token_kd_metric = str(preset["token_kd_metric"])
 
     return cfg
 

@@ -14,7 +14,12 @@ import torch.nn.functional as F
 from torch import nn
 
 from CoralMonSter.configs.hkcoral_config import HKCoralConfig
-from CoralMonSter.losses import CoralSegmentationLoss, mask_distillation_loss, token_kl_divergence
+from CoralMonSter.losses import (
+    CoralSegmentationLoss,
+    mask_distillation_loss,
+    token_cross_entropy,
+    token_kl_divergence,
+)
 from CoralMonSter.models.student_decoder import PromptFreeMaskDecoder
 from CoralMonSter.segment_anything import sam_model_registry
 
@@ -118,12 +123,21 @@ class CoralMonSter(nn.Module):
                         centered_teacher = teacher_tokens - self.teacher_center
                     else:
                         centered_teacher = teacher_tokens
-                    token_kd = token_kl_divergence(
-                        student_tokens,
-                        centered_teacher,
-                        student_temp=self.cfg.distillation.student_temperature,
-                        teacher_temp=self.teacher_temperature,
-                    )
+                    metric = getattr(self.cfg.distillation, "token_kd_metric", "ce").lower()
+                    if metric == "kl":
+                        token_kd = token_kl_divergence(
+                            student_tokens,
+                            centered_teacher,
+                            student_temp=self.cfg.distillation.student_temperature,
+                            teacher_temp=self.teacher_temperature,
+                        )
+                    else:
+                        token_kd = token_cross_entropy(
+                            student_tokens,
+                            centered_teacher,
+                            student_temp=self.cfg.distillation.student_temperature,
+                            teacher_temp=self.teacher_temperature,
+                        )
                     losses["token_kd_loss"] = token_kd * self.cfg.distillation.token_kd_weight
                     self._update_teacher_center(teacher_tokens.detach())
 
