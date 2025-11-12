@@ -20,6 +20,8 @@ class CoralSegmentationLoss(nn.Module):
         self.ce_weight = ce_weight
         self.ignore_index = ignore_index
         self.ce = nn.CrossEntropyLoss(ignore_index=ignore_index)
+        self.last_dice_loss: torch.Tensor | None = None
+        self.last_ce_loss: torch.Tensor | None = None
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         if self.ce_weight > 0:
@@ -31,6 +33,9 @@ class CoralSegmentationLoss(nn.Module):
             dice_loss = multi_class_dice_loss(logits, target, self.ignore_index)
         else:
             dice_loss = torch.tensor(0.0, device=logits.device)
+
+        self.last_ce_loss = ce_loss.detach()
+        self.last_dice_loss = dice_loss.detach()
 
         return self.dice_weight * dice_loss + self.ce_weight * ce_loss
 
@@ -52,6 +57,10 @@ def multi_class_dice_loss(logits: torch.Tensor, target: torch.Tensor, ignore_ind
 
 
 def mask_distillation_loss(student: torch.Tensor, teacher: torch.Tensor) -> torch.Tensor:
+    """
+    Match per-class probability maps between the student and teacher.
+    """
+
     if student.shape != teacher.shape:
         teacher = F.interpolate(
             teacher,
@@ -59,7 +68,7 @@ def mask_distillation_loss(student: torch.Tensor, teacher: torch.Tensor) -> torc
             mode="bilinear",
             align_corners=False,
         )
-    return F.mse_loss(torch.sigmoid(student), torch.sigmoid(teacher))
+    return F.mse_loss(student, teacher)
 
 
 def token_kl_divergence(

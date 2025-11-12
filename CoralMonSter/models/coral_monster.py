@@ -32,10 +32,8 @@ class CoralMonSter(nn.Module):
         self.image_encoder = sam.image_encoder
         self.prompt_encoder = sam.prompt_encoder
         self.student_decoder = PromptFreeMaskDecoder(sam.mask_decoder, num_classes=self.cfg.num_classes)
-        self.teacher_decoder = copy.deepcopy(self.student_decoder)
-        for p in self.teacher_decoder.parameters():
-            p.requires_grad_(False)
-        self.teacher_decoder.eval()
+        self.teacher_decoder: Optional[PromptFreeMaskDecoder] = None
+        self.teacher_ready = False
         self.momentum = self.cfg.optimization.ema_momentum_min
 
         if self.cfg.freeze_image_encoder:
@@ -58,6 +56,7 @@ class CoralMonSter(nn.Module):
             "teacher_center",
             torch.zeros(self.student_decoder.transformer_dim, dtype=torch.float32),
         )
+        self.distillation_enabled = False
 
     def forward(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         images = batch["images"].to(self.device)
@@ -78,13 +77,21 @@ class CoralMonSter(nn.Module):
             mode="bilinear",
             align_corners=False,
         )
+        student_probs = torch.softmax(logits, dim=1)
 
         losses: Dict[str, torch.Tensor] = {}
+        aux_losses: Dict[str, torch.Tensor] = {}
         teacher_time = 0.0
         if masks is not None:
             masks = masks.to(images.device)
             losses["seg_loss"] = self.seg_loss(logits, masks)
-            if self.training:
+            dice_loss = getattr(self.seg_loss, "last_dice_loss", None)
+            ce_loss = getattr(self.seg_loss, "last_ce_loss", None)
+            if dice_loss is not None:
+                aux_losses["dice_loss"] = dice_loss
+            if ce_loss is not None:
+                aux_losses["ce_loss"] = ce_loss
+            if self.training and self.distillation_enabled and self.teacher_ready:
                 teacher_points, teacher_labels = self._sample_teacher_prompts(
                     batch.get("prompt_sets"), images.device
                 )
@@ -96,11 +103,14 @@ class CoralMonSter(nn.Module):
                         teacher_points,
                         teacher_labels,
                         batch.get("boxes"),
+                        return_logits=True,
                     )
                     teacher_time = time.time() - teacher_start
-                    student_coral = torch.softmax(logits, dim=1)[:, 1:, :, :].sum(dim=1, keepdim=True)
-                    mask_kd = mask_distillation_loss(student_coral, teacher_out["mask_prob"])
-                    losses["mask_kd_loss"] = mask_kd * self.cfg.distillation.mask_kd_weight
+                    teacher_logits = teacher_out.get("mask_logits")
+                    if teacher_logits is not None:
+                        teacher_probs = torch.softmax(teacher_logits, dim=1).detach()
+                        mask_kd = mask_distillation_loss(student_probs, teacher_probs)
+                        losses["mask_kd_loss"] = mask_kd * self.cfg.distillation.mask_kd_weight
 
                     student_tokens = self.student_token_proj(student_out["token_embeddings"]).mean(dim=1)
                     teacher_tokens = self.teacher_token_proj(teacher_out["token_features"])
@@ -128,6 +138,7 @@ class CoralMonSter(nn.Module):
             "teacher_time": teacher_time,
         }
         outputs.update(losses)
+        outputs.update(aux_losses)
         return outputs
 
     @torch.no_grad()
@@ -144,6 +155,41 @@ class CoralMonSter(nn.Module):
             results.append(rescaled.squeeze(0))
         return torch.stack(results)
 
+    @torch.no_grad()
+    def teacher_predict(self, batch: Dict[str, Any]) -> Optional[torch.Tensor]:
+        """
+        Produce teacher semantic masks (argmax over logits) for visualization.
+        """
+
+        prompts = batch.get("prompt_sets")
+        if not prompts:
+            return None
+
+        points, labels = self._sample_teacher_prompts(prompts, self.device)
+        if points is None:
+            return None
+
+        if not self.teacher_ready:
+            return None
+        images = batch["images"].to(self.device)
+        embeddings = self.image_encoder(images)
+        image_pe = self._image_pe(images.shape[0], images.device)
+        teacher_out = self._teacher_forward(
+            embeddings,
+            image_pe,
+            points,
+            labels,
+            batch.get("boxes"),
+            return_logits=True,
+        )
+        if "masks" in batch and batch["masks"] is not None:
+            target_size = batch["masks"].shape[-2:]
+        else:
+            target_size = (self.cfg.image_size, self.cfg.image_size)
+        logits = teacher_out["mask_logits"]
+        logits = F.interpolate(logits, size=target_size, mode="bilinear", align_corners=False)
+        return logits.argmax(dim=1)
+
     def _teacher_forward(
         self,
         image_embeddings: torch.Tensor,
@@ -151,7 +197,10 @@ class CoralMonSter(nn.Module):
         points: Optional[torch.Tensor],
         labels: Optional[torch.Tensor],
         boxes_data: Optional[List[Optional[torch.Tensor]]],
+        return_logits: bool = False,
     ) -> Dict[str, torch.Tensor]:
+        if not self.teacher_ready:
+            raise RuntimeError("Teacher decoder not initialized yet.")
         boxes = self._stack_boxes(boxes_data or [], image_embeddings.device)
 
         sparse_embeddings, _ = self.prompt_encoder(
@@ -160,14 +209,18 @@ class CoralMonSter(nn.Module):
             masks=None,
         )
 
-        teacher_out = self.teacher_decoder(image_embeddings, image_pe, prompt_embeddings=sparse_embeddings)
-        mask_prob = torch.sigmoid(teacher_out["mask_logits"]).max(dim=1, keepdim=True)[0]
-        token_features = teacher_out["token_embeddings"].mean(dim=1)
+        decoder_out = self.teacher_decoder(image_embeddings, image_pe, prompt_embeddings=sparse_embeddings)
+        teacher_logits = decoder_out["mask_logits"]
+        teacher_probs = torch.softmax(teacher_logits, dim=1)
+        token_features = decoder_out["token_embeddings"].mean(dim=1)
 
-        return {
-            "mask_prob": mask_prob.detach(),
+        result = {
+            "mask_prob": teacher_probs.max(dim=1, keepdim=True)[0].detach(),
             "token_features": token_features.detach(),
         }
+        if return_logits:
+            result["mask_logits"] = teacher_logits.detach()
+        return result
 
     def _image_pe(self, batch_size: int, device: torch.device) -> torch.Tensor:
         pe = self.prompt_encoder.get_dense_pe().to(device)
@@ -228,6 +281,8 @@ class CoralMonSter(nn.Module):
 
     @torch.no_grad()
     def update_teacher(self) -> None:
+        if not self.teacher_ready or self.teacher_decoder is None:
+            return
         for teacher_param, student_param in zip(self.teacher_decoder.parameters(), self.student_decoder.parameters()):
             teacher_param.data.mul_(self.momentum).add_(student_param.data, alpha=1 - self.momentum)
 
@@ -236,6 +291,18 @@ class CoralMonSter(nn.Module):
 
     def set_teacher_temperature(self, value: float) -> None:
         self.teacher_temperature = float(value)
+
+    def set_distillation_enabled(self, enabled: bool) -> None:
+        self.distillation_enabled = bool(enabled)
+        if self.distillation_enabled and not self.teacher_ready:
+            self._initialize_teacher_from_student()
+
+    def _initialize_teacher_from_student(self) -> None:
+        self.teacher_decoder = copy.deepcopy(self.student_decoder)
+        for p in self.teacher_decoder.parameters():
+            p.requires_grad_(False)
+        self.teacher_decoder.eval()
+        self.teacher_ready = True
 
     @torch.no_grad()
     def _update_teacher_center(self, teacher_tokens: torch.Tensor) -> None:

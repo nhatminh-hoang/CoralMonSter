@@ -33,6 +33,10 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
         "description": "Disable EMA teacher updates",
         "use_teacher_momentum": False,
     },
+    "momentum_skip_one": {
+        "description": "Delay EMA/distillation until after epoch 1",
+        "momentum_skip_epochs": 1,
+    },
 }
 
 
@@ -49,6 +53,8 @@ def apply_scenario_preset(cfg: HKCoralConfig, preset_name: str) -> HKCoralConfig
         cfg.optimization.use_teacher_momentum = bool(preset["use_teacher_momentum"])
     if "center_momentum" in preset:
         cfg.distillation.center_momentum = float(preset["center_momentum"])
+    if "momentum_skip_epochs" in preset:
+        cfg.optimization.momentum_skip_epochs = int(preset["momentum_skip_epochs"])
 
     return cfg
 

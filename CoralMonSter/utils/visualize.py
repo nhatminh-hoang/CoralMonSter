@@ -24,12 +24,30 @@ def save_training_curves(history: Iterable[Dict[str, float]], path: Path) -> Non
     val_miou = [item["val_miou"] for item in history]
     train_pix = [item.get("train_pix_acc", 0.0) for item in history]
     val_pix = [item.get("val_pix_acc", 0.0) for item in history]
+    train_dice = [item.get("train_dice_loss", 0.0) for item in history]
+    val_dice = [item.get("val_dice_loss", 0.0) for item in history]
+    train_ce = [item.get("train_ce_loss", 0.0) for item in history]
+    val_ce = [item.get("val_ce_loss", 0.0) for item in history]
+    train_mask_kd = [item.get("train_mask_kd_loss", 0.0) for item in history]
+    val_mask_kd = [item.get("val_mask_kd_loss", 0.0) for item in history]
+    train_token_kd = [item.get("train_token_kd_loss", 0.0) for item in history]
+    val_token_kd = [item.get("val_token_kd_loss", 0.0) for item in history]
 
     path.parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(15, 4))
     plt.subplot(1, 3, 1)
-    plt.plot(epochs, train_loss, label="Train Loss")
-    plt.plot(epochs, val_loss, label="Val Loss")
+    loss_series = [
+        ("Total Loss", train_loss, val_loss, "#1f77b4"),
+        ("Dice Loss", train_dice, val_dice, "#ff7f0e"),
+        ("Cross-Entropy", train_ce, val_ce, "#2ca02c"),
+        ("Mask KD", train_mask_kd, val_mask_kd, "#d62728"),
+        ("Token KD", train_token_kd, val_token_kd, "#9467bd"),
+    ]
+    for label, train_vals, val_vals, color in loss_series:
+        if train_vals is not None:
+            plt.plot(epochs, train_vals, linestyle="--", color=color, label=f"{label} (train)")
+        if val_vals is not None:
+            plt.plot(epochs, val_vals, linestyle="-", color=color, label=f"{label} (val)")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.legend()
@@ -68,27 +86,51 @@ def save_segmentation_comparison(
     class_names: Optional[Sequence[str]] = None,
     prompt_coords: Optional[torch.Tensor] = None,
     prompt_labels: Optional[torch.Tensor] = None,
+    teacher_mask: Optional[torch.Tensor] = None,
 ) -> None:
     image_np = _tensor_to_image(image, mean, std)
     pred_color = _colorize_mask(prediction.cpu().numpy(), palette)
     target_color = _colorize_mask(target.cpu().numpy(), palette)
+    teacher_color = None
+    if teacher_mask is not None:
+        mask_tensor = teacher_mask.detach().cpu()
+        if mask_tensor.ndim == 3:
+            mask_tensor = mask_tensor.squeeze(0)
+        if mask_tensor.dtype != torch.long:
+            if mask_tensor.ndim == 3:
+                mask_tensor = mask_tensor.argmax(dim=0)
+            else:
+                mask_tensor = (mask_tensor > 0.5).long()
+        teacher_color = _colorize_mask(mask_tensor.numpy(), palette)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    plt.figure(figsize=(12, 4))
-    ax = plt.subplot(1, 3, 1)
+    cols = 3 + (1 if teacher_color is not None else 0)
+    plt.figure(figsize=(4 * cols, 4))
+    axes = []
+    ax = plt.subplot(1, cols, 1)
     ax.imshow(image_np)
     ax.set_title(f"Image: {title}")
     ax.axis("off")
+    axes.append(ax)
 
-    ax = plt.subplot(1, 3, 2)
+    ax = plt.subplot(1, cols, 2)
     ax.imshow(target_color)
     ax.set_title("Ground Truth")
     ax.axis("off")
+    axes.append(ax)
 
-    ax = plt.subplot(1, 3, 3)
+    ax = plt.subplot(1, cols, 3)
     ax.imshow(pred_color)
-    ax.set_title("Prediction")
+    ax.set_title("Student Prediction")
     ax.axis("off")
+    axes.append(ax)
+
+    if teacher_color is not None:
+        ax = plt.subplot(1, cols, cols)
+        ax.imshow(teacher_color)
+        ax.set_title("Teacher Prediction")
+        ax.axis("off")
+        axes.append(ax)
 
     if prompt_coords is not None and prompt_coords.numel() > 0:
         coords = prompt_coords.cpu().numpy()
@@ -97,7 +139,6 @@ def save_segmentation_comparison(
         )
         color_map = {1: "lime", 0: "red", -1: "yellow"}
         colors = [color_map.get(int(lbl), "white") for lbl in labels]
-        axes = [plt.subplot(1, 3, i + 1) for i in range(3)]
         for ax in axes:
             ax.scatter(
                 coords[:, 0],

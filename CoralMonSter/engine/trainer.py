@@ -59,7 +59,10 @@ class CoralTrainer:
     ) -> Path:
         device = next(self.model.parameters()).device
         profiled = False
+        skip_epochs = getattr(self.cfg.optimization, "momentum_skip_epochs", 0)
         for epoch in range(self.cfg.optimization.max_epochs):
+            teacher_active = epoch >= skip_epochs
+            self.model.set_distillation_enabled(teacher_active)
             momentum = self._compute_ema_momentum(epoch)
             if hasattr(self.model, "set_momentum"):
                 self.model.set_momentum(momentum)
@@ -68,7 +71,7 @@ class CoralTrainer:
                 self.model.set_teacher_temperature(teacher_temp)
             self.model.train()
             start = time.time()
-            train_loss, train_miou, train_pix_acc = self._train_one_epoch(
+            train_loss, train_miou, train_pix_acc, train_components = self._train_one_epoch(
                 train_loader,
                 device,
                 epoch,
@@ -76,7 +79,7 @@ class CoralTrainer:
             )
             profiled = profiled or self.enable_profile
             duration = time.time() - start
-            val_metrics = {"loss": 0.0, "miou": 0.0, "pix_acc": 0.0, "preview": None}
+            val_metrics = {"loss": 0.0, "miou": 0.0, "pix_acc": 0.0, "preview": None, "components": {}}
             if val_loader is not None:
                 val_metrics = self.evaluate(val_loader, device)
                 self.last_val_loss = val_metrics["loss"]
@@ -94,6 +97,7 @@ class CoralTrainer:
                         class_names=self.cfg.class_names,
                         path=self.log_dir / f"epoch_{epoch+1:03d}_comparison.png",
                         title=preview["file_name"],
+                        teacher_mask=preview.get("teacher_mask"),
                     )
                 if val_metrics["miou"] > self.best_miou:
                     self.best_miou = val_metrics["miou"]
@@ -107,6 +111,16 @@ class CoralTrainer:
                 "train_pix_acc": train_pix_acc,
                 "val_pix_acc": val_metrics["pix_acc"],
                 "duration_sec": duration,
+                "train_seg_loss": train_components.get("seg_loss", 0.0),
+                "train_mask_kd_loss": train_components.get("mask_kd_loss", 0.0),
+                "train_token_kd_loss": train_components.get("token_kd_loss", 0.0),
+                "train_dice_loss": train_components.get("dice_loss", 0.0),
+                "train_ce_loss": train_components.get("ce_loss", 0.0),
+                "val_seg_loss": val_metrics["components"].get("seg_loss", 0.0),
+                "val_mask_kd_loss": val_metrics["components"].get("mask_kd_loss", 0.0),
+                "val_token_kd_loss": val_metrics["components"].get("token_kd_loss", 0.0),
+                "val_dice_loss": val_metrics["components"].get("dice_loss", 0.0),
+                "val_ce_loss": val_metrics["components"].get("ce_loss", 0.0),
             }
             self.history.append(metrics)
             self._log_metrics(metrics)
@@ -142,7 +156,7 @@ class CoralTrainer:
         device: torch.device,
         epoch: int,
         profile_batch: bool = False,
-    ) -> tuple[float, float, float]:
+    ) -> tuple[float, float, float, Dict[str, float]]:
         loss_sum = 0.0
         count = 0
         meter = SegmentationMeter(self.cfg.num_classes, self.cfg.ignore_label)
@@ -152,6 +166,7 @@ class CoralTrainer:
             leave=False,
         )
         profiled = False
+        component_sums: Dict[str, float] = {}
         for batch in progress:
             io_start = time.time()
             batch = self._to_device(batch, device)
@@ -166,7 +181,11 @@ class CoralTrainer:
             )
             self.optimizer.step()
             self.optimizer.zero_grad()
-            if self.cfg.optimization.use_teacher_momentum and epoch != 0:
+            if (
+                self.cfg.optimization.use_teacher_momentum
+                and getattr(self.model, "distillation_enabled", True)
+                and epoch != 0
+            ):
                 self.model.update_teacher()
 
             batch_size = batch["images"].shape[0]
@@ -178,10 +197,11 @@ class CoralTrainer:
                 meter.update(preds, masks.detach().cpu())
             train_loss = loss_sum / max(count, 1)
             loss_postfix = {"loss_total": f"{train_loss:.4f}"}
-            for key in ("seg_loss", "mask_kd_loss", "token_kd_loss"):
+            for key in ("seg_loss", "mask_kd_loss", "token_kd_loss", "dice_loss", "ce_loss"):
                 if key in outputs:
                     label = key.replace("_loss", "")
                     loss_postfix[f"loss_{label}"] = f"{outputs[key].item():.4f}"
+                    component_sums[key] = component_sums.get(key, 0.0) + outputs[key].item() * batch_size
             progress.set_postfix(**loss_postfix)
 
             if profile_batch and not profiled:
@@ -195,7 +215,8 @@ class CoralTrainer:
                     f"Teacher Decoder={teacher_time*1000:.2f} ms"
                 )
                 profiled = True
-        return loss_sum / max(count, 1), meter.mean_iou(), meter.pixel_accuracy()
+        component_avgs = {k: v / max(count, 1) for k, v in component_sums.items()}
+        return loss_sum / max(count, 1), meter.mean_iou(), meter.pixel_accuracy(), component_avgs
 
     @torch.no_grad()
     def evaluate(
@@ -211,6 +232,7 @@ class CoralTrainer:
         preview = None
         if visualize_dir is not None:
             visualize_dir.mkdir(parents=True, exist_ok=True)
+        component_sums: Dict[str, float] = {}
         for batch in loader:
             batch = self._to_device(batch, device)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
@@ -220,6 +242,12 @@ class CoralTrainer:
             count += batch_size
             preds = outputs["logits"].argmax(dim=1).detach().cpu()
             masks = batch.get("masks")
+            teacher_masks = None
+            # Teacher predictions are optional and only computed when we plan to visualize them.
+            if (visualize_dir is not None or preview is None) and batch.get("prompt_sets"):
+                teacher_pred = self.model.teacher_predict(batch)
+                if teacher_pred is not None:
+                    teacher_masks = teacher_pred.detach().cpu()
             if masks is not None:
                 meter.update(preds, masks.detach().cpu())
                 if preview is None:
@@ -227,6 +255,7 @@ class CoralTrainer:
                         "image": batch["images"][0].detach().cpu(),
                         "mask": masks[0].detach().cpu(),
                         "prediction": preds[0].detach().cpu(),
+                        "teacher_mask": teacher_masks[0] if teacher_masks is not None else None,
                         "file_name": batch["file_names"][0],
                     }
                 if visualize_dir is not None:
@@ -242,12 +271,17 @@ class CoralTrainer:
                             class_names=self.cfg.class_names,
                             path=visualize_dir / f"{file_stem}.png",
                             title=batch["file_names"][i],
+                            teacher_mask=teacher_masks[i] if teacher_masks is not None else None,
                         )
+                for key in ("seg_loss", "mask_kd_loss", "token_kd_loss", "dice_loss", "ce_loss"):
+                    if key in outputs:
+                        component_sums[key] = component_sums.get(key, 0.0) + outputs[key].item() * batch_size
         return {
             "loss": loss_sum / max(count, 1),
             "miou": meter.mean_iou(),
             "pix_acc": meter.pixel_accuracy(),
             "preview": preview,
+            "components": {k: v / max(count, 1) for k, v in component_sums.items()},
         }
 
     @staticmethod
