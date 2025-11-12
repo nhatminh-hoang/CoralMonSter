@@ -33,9 +33,9 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
         "description": "Disable EMA teacher updates",
         "use_teacher_momentum": False,
     },
-    "momentum_skip_one": {
-        "description": "Delay EMA/distillation until after epoch 1",
-        "momentum_skip_epochs": 1,
+    "momentum_no_skip": {
+        "description": "Start EMA/distillation immediately (no warm-up)",
+        "momentum_skip_epochs": 0,
     },
 }
 

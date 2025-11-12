@@ -25,7 +25,7 @@ class OptimizationConfig:
     lr_warmup_epochs: int = 5
     lr_min_factor: float = 0.1
     use_teacher_momentum: bool = True
-    momentum_skip_epochs: int = 0
+    momentum_skip_epochs: int = 1
 
 
 @dataclass
