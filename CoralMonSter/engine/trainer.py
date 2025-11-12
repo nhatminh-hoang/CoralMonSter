@@ -317,13 +317,18 @@ class CoralTrainer:
         total_epochs = max(1, self.cfg.optimization.max_epochs)
         warmup_epochs = max(1, self.cfg.optimization.lr_warmup_epochs)
         epoch = current_step
+        base_lr = self.cfg.optimization.learning_rate
+        target_lr = 1e-6
+        target_factor = target_lr / max(base_lr, 1e-12)
 
         if epoch < warmup_epochs:
             return (epoch + 1) / warmup_epochs
 
         progress = (epoch - warmup_epochs + 1) / max(1, total_epochs - warmup_epochs)
-        min_factor = self.cfg.optimization.lr_min_factor
+        min_factor = min(self.cfg.optimization.lr_min_factor, target_factor)
         cosine = 0.5 * (1 + math.sin(math.pi * (progress - 0.5)))
+        if epoch >= total_epochs - 1:
+            return target_factor
         return min_factor + (1 - min_factor) * cosine
 
     def _setup_logger(self) -> None:

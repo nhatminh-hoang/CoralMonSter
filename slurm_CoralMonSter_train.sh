@@ -41,3 +41,13 @@ python -m CoralMonSter.train \
   --dataset_root "${DATASET_ROOT}" \
   --max_epochs "${MAX_EPOCHS}" \
   --batch_size "${BATCH_SIZE}"
+
+echo "===> Running scenario: momentum_no_skip"
+python -m CoralMonSter.train \
+  --gpu_devices "${GPU_DEVICES}" \
+  --scenario_name "scen_momentum_no_skip" \
+  --scenario_preset "momentum_no_skip" \
+  --sam_checkpoint "${CHECKPOINT}" \
+  --dataset_root "${DATASET_ROOT}" \
+  --max_epochs "${MAX_EPOCHS}" \
+  --batch_size "${BATCH_SIZE}"
