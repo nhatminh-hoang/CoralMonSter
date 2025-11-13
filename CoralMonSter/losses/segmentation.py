@@ -91,4 +91,5 @@ def token_cross_entropy(
     log_student = F.log_softmax(student / student_temp, dim=-1)
     soft_teacher = F.softmax(teacher / teacher_temp, dim=-1)
     loss = -torch.sum(soft_teacher * log_student, dim=-1).mean()
+    loss = loss * (student_temp * student_temp)
     return loss
