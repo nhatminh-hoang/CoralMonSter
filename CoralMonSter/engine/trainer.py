@@ -71,7 +71,14 @@ class CoralTrainer:
                 self.model.set_teacher_temperature(teacher_temp)
             self.model.train()
             start = time.time()
-            train_loss, train_miou, train_pix_acc, train_components = self._train_one_epoch(
+            (
+                train_loss,
+                train_miou,
+                train_pix_acc,
+                train_components,
+                train_class_iou,
+                train_confusion,
+            ) = self._train_one_epoch(
                 train_loader,
                 device,
                 epoch,
@@ -121,6 +128,10 @@ class CoralTrainer:
                 "val_token_kd_loss": val_metrics["components"].get("token_kd_loss", 0.0),
                 "val_dice_loss": val_metrics["components"].get("dice_loss", 0.0),
                 "val_ce_loss": val_metrics["components"].get("ce_loss", 0.0),
+                "train_class_iou": train_class_iou,
+                "val_class_iou": val_metrics["class_iou"],
+                "train_confusion": train_confusion.tolist(),
+                "val_confusion": val_metrics["confusion_matrix"],
             }
             self.history.append(metrics)
             self._log_metrics(metrics)
@@ -156,7 +167,7 @@ class CoralTrainer:
         device: torch.device,
         epoch: int,
         profile_batch: bool = False,
-    ) -> tuple[float, float, float, Dict[str, float]]:
+    ) -> tuple[float, float, float, Dict[str, float], list[float], torch.Tensor]:
         loss_sum = 0.0
         count = 0
         meter = SegmentationMeter(self.cfg.num_classes, self.cfg.ignore_label)
@@ -216,7 +227,14 @@ class CoralTrainer:
                 )
                 profiled = True
         component_avgs = {k: v / max(count, 1) for k, v in component_sums.items()}
-        return loss_sum / max(count, 1), meter.mean_iou(), meter.pixel_accuracy(), component_avgs
+        return (
+            loss_sum / max(count, 1),
+            meter.mean_iou(),
+            meter.pixel_accuracy(),
+            component_avgs,
+            meter.per_class_iou(),
+            meter.confusion_matrix(),
+        )
 
     @torch.no_grad()
     def evaluate(
@@ -233,7 +251,7 @@ class CoralTrainer:
         if visualize_dir is not None:
             visualize_dir.mkdir(parents=True, exist_ok=True)
         component_sums: Dict[str, float] = {}
-        for batch in loader:
+        for batch in tqdm(loader):
             batch = self._to_device(batch, device)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 outputs = self.model.forward(batch)
@@ -282,6 +300,8 @@ class CoralTrainer:
             "pix_acc": meter.pixel_accuracy(),
             "preview": preview,
             "components": {k: v / max(count, 1) for k, v in component_sums.items()},
+            "class_iou": meter.per_class_iou(),
+            "confusion_matrix": meter.confusion_matrix().tolist(),
         }
 
     @staticmethod

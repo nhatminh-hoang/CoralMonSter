@@ -4,6 +4,8 @@ Metric utilities for CoralMonSter training/evaluation loops.
 
 from __future__ import annotations
 
+from typing import List
+
 import torch
 
 
@@ -46,6 +48,17 @@ class SegmentationMeter:
             return 0.0
         iou = intersection[valid] / union[valid]
         return iou.mean().item()
+
+    def per_class_iou(self) -> List[float]:
+        intersection = torch.diag(self.confusion)
+        union = self.confusion.sum(1) + self.confusion.sum(0) - intersection
+        iou = torch.zeros_like(intersection)
+        valid = union > 0
+        iou[valid] = intersection[valid] / union[valid]
+        return iou.tolist()
+
+    def confusion_matrix(self) -> torch.Tensor:
+        return self.confusion.clone()
 
     def pixel_accuracy(self) -> float:
         if self.total == 0:
