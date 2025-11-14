@@ -1,22 +1,28 @@
 """
-Command-line entry point for training CoralMonSter on HKCoral.
+Command-line entry point for training CoralMonSter on HKCoral or CoralScapes.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from CoralMonSter import CoralMonSter as CoralModel
-from CoralMonSter import CoralTrainer, HKCoralConfig
+from CoralMonSter import CoralTrainer, CoralScapesConfig, HKCoralConfig
 from CoralMonSter.configs.scenarios import SCENARIO_PRESETS, apply_scenario_preset
-from CoralMonSter.data import HKCoralDataset, hkcoral_collate_fn
+from CoralMonSter.data import CoralScapesDataset, HKCoralDataset, hkcoral_collate_fn
 from CoralMonSter.utils import save_checkpoint
+
 
 
 def infer_model_type_from_checkpoint(path: str) -> Optional[str]:
@@ -28,8 +34,11 @@ def infer_model_type_from_checkpoint(path: str) -> Optional[str]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train CoralMonSter on HKCoral")
+    parser = argparse.ArgumentParser(description="Train CoralMonSter on coral datasets")
+    parser.add_argument("--dataset", type=str, choices=["hkcoral", "coralscapes"], default="hkcoral")
     parser.add_argument("--dataset_root", type=str, default="datasets/HKCoral")
+    parser.add_argument("--dataset_cache_dir", type=str, default=None)
+    parser.add_argument("--hf_token", type=str, default=None)
     parser.add_argument("--sam_checkpoint", type=str, required=True)
     parser.add_argument("--model_type", type=str, default=None, choices=["vit_h", "vit_l", "vit_b"])
     parser.add_argument("--image_size", type=int, default=1024)
@@ -58,6 +67,9 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Comma-separated list of GPU device indices to use (e.g., '5,6,7').",
     )
+    parser.add_argument("--train_subset", type=int, default=None, help="Limit number of training samples per epoch.")
+    parser.add_argument("--val_subset", type=int, default=None, help="Limit number of validation samples.")
+    parser.add_argument("--test_subset", type=int, default=None, help="Limit number of test samples.")
     return parser.parse_args()
 
 
@@ -86,14 +98,30 @@ def main() -> None:
     if args.scenario_preset and scenario_label == "default":
         scenario_label = args.scenario_preset
 
-    cfg = HKCoralConfig(
-        dataset_root=Path(args.dataset_root),
-        split="train",
-        image_size=args.image_size,
-        model_type=model_type,
-        sam_checkpoint=Path(args.sam_checkpoint),
-        scenario_name=scenario_label or "default",
-    )
+    dataset_choice = args.dataset.lower()
+    dataset_root = Path(args.dataset_root)
+    dataset_cache_dir = Path(args.dataset_cache_dir).expanduser() if args.dataset_cache_dir else None
+
+    if dataset_choice == "coralscapes":
+        cfg = CoralScapesConfig(
+            dataset_root=dataset_root,
+            split="train",
+            image_size=args.image_size,
+            model_type=model_type,
+            sam_checkpoint=Path(args.sam_checkpoint),
+            scenario_name=scenario_label or "default",
+            dataset_cache_dir=dataset_cache_dir,
+            hf_token=args.hf_token,
+        )
+    else:
+        cfg = HKCoralConfig(
+            dataset_root=dataset_root,
+            split="train",
+            image_size=args.image_size,
+            model_type=model_type,
+            sam_checkpoint=Path(args.sam_checkpoint),
+            scenario_name=scenario_label or "default",
+        )
     cfg.freeze_image_encoder = True
     if args.scenario_preset:
         cfg = apply_scenario_preset(cfg, args.scenario_preset)
@@ -111,39 +139,47 @@ def main() -> None:
         state = torch.load(args.resume, map_location="cpu")
         model.load_state_dict(state.get("model", state), strict=False)
 
-    train_dataset = HKCoralDataset(
-        cfg.dataset_root,
-        "train",
-        cfg.image_size,
-        cfg.num_classes,
-        cfg.ignore_label,
-        prompt_points=cfg.distillation.prompt_points,
-        prompt_bins=cfg.prompt_bins,
-        mean=cfg.image_mean,
-        std=cfg.image_std,
-    )
-    val_dataset = HKCoralDataset(
-        cfg.dataset_root,
-        "val",
-        cfg.image_size,
-        cfg.num_classes,
-        cfg.ignore_label,
-        prompt_points=cfg.distillation.prompt_points,
-        prompt_bins=cfg.prompt_bins,
-        mean=cfg.image_mean,
-        std=cfg.image_std,
-    )
-    test_dataset = HKCoralDataset(
-        cfg.dataset_root,
-        "test",
-        cfg.image_size,
-        cfg.num_classes,
-        cfg.ignore_label,
-        prompt_points=cfg.distillation.prompt_points,
-        prompt_bins=cfg.prompt_bins,
-        mean=cfg.image_mean,
-        std=cfg.image_std,
-    )
+    def build_dataset(split: str):
+        if dataset_choice == "coralscapes":
+            hf_split = {"val": "validation"}.get(split, split)
+            return CoralScapesDataset(
+                split=hf_split,
+                image_size=cfg.image_size,
+                num_classes=cfg.num_classes,
+                ignore_label=cfg.ignore_label,
+                prompt_points=cfg.distillation.prompt_points,
+                prompt_bins=cfg.prompt_bins,
+                mean=cfg.image_mean,
+                std=cfg.image_std,
+                dataset_id=getattr(cfg, "dataset_id", "EPFL-ECEO/coralscapes"),
+                cache_dir=getattr(cfg, "dataset_cache_dir", None),
+                hf_token=getattr(cfg, "hf_token", None),
+            )
+        return HKCoralDataset(
+            cfg.dataset_root,
+            split,
+            cfg.image_size,
+            cfg.num_classes,
+            cfg.ignore_label,
+            prompt_points=cfg.distillation.prompt_points,
+            prompt_bins=cfg.prompt_bins,
+            mean=cfg.image_mean,
+            std=cfg.image_std,
+        )
+
+    train_dataset = build_dataset("train")
+    val_dataset = build_dataset("val")
+    test_dataset = build_dataset("test")
+
+    def maybe_limit(ds, limit):
+        if limit is None or limit <= 0:
+            return ds
+        count = min(limit, len(ds))
+        return Subset(ds, list(range(count)))
+
+    train_dataset = maybe_limit(train_dataset, args.train_subset)
+    val_dataset = maybe_limit(val_dataset, args.val_subset)
+    test_dataset = maybe_limit(test_dataset, args.test_subset)
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.optimization.batch_size,

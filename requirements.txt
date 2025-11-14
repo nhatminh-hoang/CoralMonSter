@@ -1,0 +1,8 @@
+torch>=2.0
+torchvision>=0.15
+numpy>=1.23
+Pillow>=9.0
+tqdm>=4.65
+datasets>=2.15
+huggingface_hub>=0.19
+pycocotools>=2.0

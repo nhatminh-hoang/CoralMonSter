@@ -105,7 +105,7 @@ def save_segmentation_comparison(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     cols = 3 + (1 if teacher_color is not None else 0)
-    plt.figure(figsize=(4 * cols, 4))
+    fig = plt.figure(figsize=(4 * cols, 4))
     axes = []
     ax = plt.subplot(1, cols, 1)
     ax.imshow(image_np)
@@ -158,15 +158,15 @@ def save_segmentation_comparison(
             color = tuple(c / 255.0 for c in palette[idx])
             handles.append(Patch(facecolor=color, edgecolor="white", label=name))
         if handles:
-            plt.legend(
+            fig.legend(
                 handles=handles,
                 loc="lower center",
-                bbox_to_anchor=(0.5, -0.1),
-                ncol=min(len(handles), 4),
+                bbox_to_anchor=(0.5, -0.01),
+                ncol=min(len(handles), 8),
                 fontsize=9,
             )
 
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0.08 if class_names else 0, 1, 1))
     plt.savefig(path, dpi=300)
     plt.close()
 

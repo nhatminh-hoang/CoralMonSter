@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import torch
 
 from .hkcoral_dataset import HKCoralDataset, PromptSample, sample_prompt
+from .coralscapes_dataset import CoralScapesDataset
 
 
 def hkcoral_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -35,6 +36,7 @@ def hkcoral_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 __all__ = [
     "HKCoralDataset",
+    "CoralScapesDataset",
     "PromptSample",
     "sample_prompt",
     "hkcoral_collate_fn",
