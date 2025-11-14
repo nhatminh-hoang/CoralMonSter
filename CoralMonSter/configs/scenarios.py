@@ -13,33 +13,48 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
     "full": {
         "description": "Full distillation: scheduler, centering, frozen encoder, EMA teacher",
         "use_lr_scheduler": True,
-        "freeze_image_encoder": True,
+        "freeze_image_encoder": False,
         "use_teacher_momentum": True,
         "center_momentum": 0.99,
     },
     "no_scheduler": {
         "description": "Disable LR scheduler",
         "use_lr_scheduler": False,
+        "freeze_image_encoder": False,
+        "use_teacher_momentum": True,
+        "center_momentum": 0.99,
     },
     "no_centering": {
         "description": "Disable DINO-style centering",
         "center_momentum": 0.0,
+        "freeze_image_encoder": False,
+        "use_teacher_momentum": True,
     },
     "unfrozen_encoder": {
         "description": "Fine-tune image encoder (no freezing)",
-        "freeze_image_encoder": False,
+        "freeze_image_encoder": True,
+        "use_teacher_momentum": True,
+        "center_momentum": 0.99,
     },
     "no_momentum": {
         "description": "Disable EMA teacher updates",
         "use_teacher_momentum": False,
+        "freeze_image_encoder": False,
+        "center_momentum": 0.99,
     },
     "momentum_no_skip": {
         "description": "Start EMA/distillation immediately (no warm-up)",
         "momentum_skip_epochs": 0,
+        "freeze_image_encoder": False,
+        "use_teacher_momentum": True,
+        "center_momentum": 0.99,
     },
     "token_kd_kl": {
         "description": "Use KL divergence instead of cross-entropy for token distillation",
         "token_kd_metric": "kl",
+        "freeze_image_encoder": False,
+        "use_teacher_momentum": True,
+        "center_momentum": 0.99,
     },
 }
 

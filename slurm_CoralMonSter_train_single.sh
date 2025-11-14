@@ -17,20 +17,10 @@ conda activate minh_ml
 CHECKPOINT="checkpoints/vit_b_coralscop.pth"
 DATASET_ROOT="datasets/HKCoral"
 MAX_EPOCHS=40
-BATCH_SIZE=8
-
-echo "===> Running scenario: full"
-CUDA_VISIBLE_DEVICES=5 python -m CoralMonSter.train \
-  --scenario_name "scen_full" \
-  --scenario_preset "full" \
-  --sam_checkpoint "${CHECKPOINT}" \
-  --dataset_root "${DATASET_ROOT}" \
-  --max_epochs "${MAX_EPOCHS}" \
-  --batch_size "${BATCH_SIZE}" &
-PID_FULL=$!
+BATCH_SIZE=2
 
 echo "===> Running scenario: no_scheduler"
-CUDA_VISIBLE_DEVICES=6 python -m CoralMonSter.train \
+CUDA_VISIBLE_DEVICES=4 python -m CoralMonSter.train \
   --scenario_name "scen_no_scheduler" \
   --scenario_preset "no_scheduler" \
   --sam_checkpoint "${CHECKPOINT}" \
@@ -40,7 +30,7 @@ CUDA_VISIBLE_DEVICES=6 python -m CoralMonSter.train \
 PID_NOSCHED=$!
 
 echo "===> Running scenario: no_centering"
-CUDA_VISIBLE_DEVICES=7 python -m CoralMonSter.train \
+CUDA_VISIBLE_DEVICES=5 python -m CoralMonSter.train \
   --scenario_name "scen_no_centering" \
   --scenario_preset "no_centering" \
   --sam_checkpoint "${CHECKPOINT}" \
@@ -49,4 +39,4 @@ CUDA_VISIBLE_DEVICES=7 python -m CoralMonSter.train \
   --batch_size "${BATCH_SIZE}" &
 PID_NOCENTER=$!
 
-wait $PID_FULL $PID_NOSCHED $PID_NOCENTER
+wait $PID_NOSCHED $PID_NOCENTER
