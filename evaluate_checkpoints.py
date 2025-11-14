@@ -153,7 +153,7 @@ def main() -> None:
         cfg.resolve_paths()
         loader = prepare_dataloader(cfg, args.batch_size, args.num_workers)
         print(f"Evaluating {ckpt_path} on split='{args.split}' ...")
-        result = evaluate_checkpoint(ckpt_path, device, loader, cfg, visualize_dir=Path(args.fig_root) / scenario_name)
+        result = evaluate_checkpoint(ckpt_path, device, loader, cfg, visualize_dir=Path(args.fig_root) / scenario_name / "visualizations" if args.fig_root else None)
         fig_path = Path(args.fig_root) / scenario_name / f"{ckpt_path.stem}_{args.split}_confusion.png"
         save_confusion_figure(result["confusion_matrix"], cfg.class_names, fig_path)
         results.append(result)
