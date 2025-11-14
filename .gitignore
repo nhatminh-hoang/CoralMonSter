@@ -7,4 +7,3 @@ train_outs/
 confusion_figs/
 
 *.json
-*.sh
