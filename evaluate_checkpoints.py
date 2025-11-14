@@ -65,12 +65,13 @@ def evaluate_checkpoint(
     device: torch.device,
     loader: DataLoader,
     cfg: HKCoralConfig,
+    visualize_dir: Optional[Path] = None,
 ) -> dict:
     model = CoralModel(cfg).to(device)
     state = torch.load(path, map_location="cpu")
     model.load_state_dict(state.get("model", state), strict=False)
     trainer = CoralTrainer(model, cfg)
-    metrics = trainer.evaluate(loader, device)
+    metrics = trainer.evaluate(loader, device, visualize_dir=visualize_dir)
     return {
         "checkpoint": str(path),
         "scenario": cfg.scenario_name,
@@ -152,7 +153,7 @@ def main() -> None:
         cfg.resolve_paths()
         loader = prepare_dataloader(cfg, args.batch_size, args.num_workers)
         print(f"Evaluating {ckpt_path} on split='{args.split}' ...")
-        result = evaluate_checkpoint(ckpt_path, device, loader, cfg)
+        result = evaluate_checkpoint(ckpt_path, device, loader, cfg, visualize_dir=Path(args.fig_root) / scenario_name)
         fig_path = Path(args.fig_root) / scenario_name / f"{ckpt_path.stem}_{args.split}_confusion.png"
         save_confusion_figure(result["confusion_matrix"], cfg.class_names, fig_path)
         results.append(result)
