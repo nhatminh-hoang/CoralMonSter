@@ -105,28 +105,29 @@ def save_segmentation_comparison(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     cols = 3 + (1 if teacher_color is not None else 0)
-    fig = plt.figure(figsize=(4 * cols, 4))
+    fig = plt.figure(figsize=(4 * cols, 5))
+    gs = fig.add_gridspec(2, cols, height_ratios=[12, 2], hspace=0.25)
     axes = []
-    ax = plt.subplot(1, cols, 1)
+    ax = fig.add_subplot(gs[0, 0])
     ax.imshow(image_np)
     ax.set_title(f"Image: {title}")
     ax.axis("off")
     axes.append(ax)
 
-    ax = plt.subplot(1, cols, 2)
+    ax = fig.add_subplot(gs[0, 1])
     ax.imshow(target_color)
     ax.set_title("Ground Truth")
     ax.axis("off")
     axes.append(ax)
 
-    ax = plt.subplot(1, cols, 3)
+    ax = fig.add_subplot(gs[0, 2])
     ax.imshow(pred_color)
     ax.set_title("Student Prediction")
     ax.axis("off")
     axes.append(ax)
 
     if teacher_color is not None:
-        ax = plt.subplot(1, cols, cols)
+        ax = fig.add_subplot(gs[0, cols - 1])
         ax.imshow(teacher_color)
         ax.set_title("Teacher Prediction")
         ax.axis("off")
@@ -150,6 +151,9 @@ def save_segmentation_comparison(
                 linewidths=0.5,
             )
 
+    legend_ax = fig.add_subplot(gs[1, :])
+    legend_ax.axis("off")
+
     if class_names:
         handles = []
         for idx, name in enumerate(class_names):
@@ -158,15 +162,14 @@ def save_segmentation_comparison(
             color = tuple(c / 255.0 for c in palette[idx])
             handles.append(Patch(facecolor=color, edgecolor="white", label=name))
         if handles:
-            fig.legend(
+            legend_ax.legend(
                 handles=handles,
-                loc="lower center",
-                bbox_to_anchor=(0.5, -0.01),
-                ncol=min(len(handles), 8),
+                loc="center",
+                ncol=min(len(handles), 10),
                 fontsize=9,
             )
 
-    plt.tight_layout(rect=(0, 0.08 if class_names else 0, 1, 1))
+    plt.subplots_adjust(top=0.9)
     plt.savefig(path, dpi=300)
     plt.close()
 
