@@ -183,32 +183,21 @@ class CoralTrainer:
         profiled = False
         component_sums: Dict[str, float] = {}
         timing_totals = {
-            "data_io": 0.0,
             "encoder_time": 0.0,
             "student_time": 0.0,
             "teacher_time": 0.0,
             "backward_time": 0.0,
-            "logging_time": 0.0,
-            "loader_wait": 0.0,
             "cpu_loader": 0.0,
         }
         timing_steps = 0
-        prev_step_end = time.time()
-        cpu_timing_totals: Dict[str, float] = {}
         for batch in progress:
-            loader_wait = time.time() - prev_step_end
-            timing_totals["loader_wait"] += max(loader_wait, 0.0)
             loader_timings = batch.pop("timings", None)
             if loader_timings:
-                cpu_total = 0.0
-                for key, value in loader_timings.items():
-                    cpu_timing_totals[key] = cpu_timing_totals.get(key, 0.0) + float(value)
-                    cpu_total += float(value)
+                cpu_total = float(loader_timings.get("total", 0.0))
+                if cpu_total <= 0.0:
+                    cpu_total = sum(float(value) for value in loader_timings.values())
                 timing_totals["cpu_loader"] += cpu_total
-            io_start = time.time()
             batch = self._to_device(batch, device)
-            data_io = time.time() - io_start
-            timing_totals["data_io"] += data_io
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 outputs = self.model(batch)
             if device.type == "cuda":
@@ -250,30 +239,23 @@ class CoralTrainer:
                 if key in outputs:
                     timing_totals[key] += outputs[key]
             timing_steps += 1
-            log_start = time.time()
             avg_postfix = {}
             if timing_steps > 0:
                 avg_postfix = {
-                    "data_io_ms": f"{(timing_totals['data_io'] / timing_steps) * 1000:.1f}",
                     "enc_ms": f"{(timing_totals['encoder_time'] / timing_steps) * 1000:.1f}",
                     "stu_ms": f"{(timing_totals['student_time'] / timing_steps) * 1000:.1f}",
                     "teach_ms": f"{(timing_totals['teacher_time'] / timing_steps) * 1000:.1f}",
                     "bwd_ms": f"{(timing_totals['backward_time'] / timing_steps) * 1000:.1f}",
-                    "log_ms": f"{(timing_totals['logging_time'] / timing_steps) * 1000:.1f}",
-                    "load_ms": f"{(timing_totals['loader_wait'] / timing_steps) * 1000:.1f}",
                     "cpu_ms": f"{(timing_totals['cpu_loader'] / timing_steps) * 1000:.1f}",
                 }
             progress.set_postfix({**loss_postfix, **avg_postfix})
-            timing_totals["logging_time"] += time.time() - log_start
-            prev_step_end = time.time()
 
             if profile_batch and not profiled:
                 teacher_time = outputs.get("teacher_time", 0.0)
                 encoder_time = outputs.get("encoder_time", 0.0)
                 student_time = outputs.get("student_time", 0.0)
                 print(
-                    f"[PROFILE] Data IO={data_io*1000:.2f} ms | "
-                    f"Image Encoder={encoder_time*1000:.2f} ms | "
+                    f"[PROFILE] Image Encoder={encoder_time*1000:.2f} ms | "
                     f"Student Decoder={student_time*1000:.2f} ms | "
                     f"Teacher Decoder={teacher_time*1000:.2f} ms"
                 )
