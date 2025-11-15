@@ -19,7 +19,7 @@ DATASET_ROOT="datasets/CoralScapes"
 DATASET_CACHE_DIR="${DATASET_ROOT}/cache"
 MAX_EPOCHS=40
 BATCH_SIZE=2
-NUM_WORKERS=8
+NUM_WORKERS=4
 GPU_DEVICES="0"
 export CUDA_VISIBLE_DEVICES="${GPU_DEVICES}"
 
@@ -28,33 +28,41 @@ if [[ -n "${HF_TOKEN}" ]]; then
   HF_TOKEN_ARG+=(--hf_token "${HF_TOKEN}")
 fi
 
-SCENARIOS=(
-  "coralscapes_full:full"
-  "coralscapes_no_scheduler:no_scheduler"
-  "coralscapes_no_centering:no_centering"
-  "coralscapes_unfrozen_encoder:unfrozen_encoder"
-  "coralscapes_no_momentum:no_momentum"
-  "coralscapes_momentum_no_skip:momentum_no_skip"
-  "coralscapes_token_kd_kl:token_kd_kl"
-)
+echo "===> Running scenario: no_momentum"
+python -m CoralMonSter.train \
+  --dataset coralscapes \
+  --dataset_root "${DATASET_ROOT}" \
+  --dataset_cache_dir "${DATASET_CACHE_DIR}" \
+  --scenario_name "coralscapes_no_momentum" \
+  --scenario_preset "no_momentum" \
+  --sam_checkpoint "${CHECKPOINT}" \
+  --max_epochs "${MAX_EPOCHS}" \
+  --batch_size "${BATCH_SIZE}" \
+  --num_workers "${NUM_WORKERS}"
 
-for entry in "${SCENARIOS[@]}"; do
-  IFS=":" read -r SCENARIO_NAME SCENARIO_PRESET <<< "${entry}"
-  echo "===> Running scenario: ${SCENARIO_NAME} (${SCENARIO_PRESET})"
-  python -m CoralMonSter.train \
-    --dataset coralscapes \
-    --dataset_root "${DATASET_ROOT}" \
-    --dataset_cache_dir "${DATASET_CACHE_DIR}" \
-    --gpu_devices "${GPU_DEVICES}" \
-    --scenario_name "${SCENARIO_NAME}" \
-    --scenario_preset "${SCENARIO_PRESET}" \
-    --sam_checkpoint "${CHECKPOINT}" \
-    --max_epochs "${MAX_EPOCHS}" \
-    --batch_size "${BATCH_SIZE}" \
-    --num_workers "${NUM_WORKERS}" \
-    "${HF_TOKEN_ARG[@]}"
+echo "===> Running scenario: momentum_no_skip"
+python -m CoralMonSter.train \
+  --dataset coralscapes \
+  --dataset_root "${DATASET_ROOT}" \
+  --dataset_cache_dir "${DATASET_CACHE_DIR}" \
+  --scenario_name "coralscapes_momentum_no_skip" \
+  --scenario_preset "momentum_no_skip" \
+  --sam_checkpoint "${CHECKPOINT}" \
+  --max_epochs "${MAX_EPOCHS}" \
+  --batch_size "${BATCH_SIZE}" \
+  --num_workers "${NUM_WORKERS}"
 
-done
+echo "===> Running scenario: frozen_encoder"
+python -m CoralMonSter.train \
+  --dataset coralscapes \
+  --dataset_root "${DATASET_ROOT}" \
+  --dataset_cache_dir "${DATASET_CACHE_DIR}" \
+  --scenario_name "coralscapes_frozen_encoder" \
+  --scenario_preset "frozen_encoder" \
+  --sam_checkpoint "${CHECKPOINT}" \
+  --max_epochs "${MAX_EPOCHS}" \
+  --batch_size "${BATCH_SIZE}" \
+  --num_workers "${NUM_WORKERS}"
 
 python evaluate_checkpoints.py \
   --sam_checkpoint "${CHECKPOINT}" \

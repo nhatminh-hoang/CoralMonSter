@@ -4,8 +4,11 @@ Command-line entry point for training CoralMonSter on HKCoral or CoralScapes.
 
 from __future__ import annotations
 
-import argparse
 import os
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+import argparse
 import sys
 from pathlib import Path
 from typing import Optional
@@ -22,8 +25,6 @@ from CoralMonSter import CoralTrainer, CoralScapesConfig, HKCoralConfig
 from CoralMonSter.configs.scenarios import SCENARIO_PRESETS, apply_scenario_preset
 from CoralMonSter.data import CoralScapesDataset, HKCoralDataset, hkcoral_collate_fn
 from CoralMonSter.utils import save_checkpoint
-
-
 
 def infer_model_type_from_checkpoint(path: str) -> Optional[str]:
     name = Path(path).name.lower()

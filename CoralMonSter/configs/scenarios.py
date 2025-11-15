@@ -30,7 +30,7 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
         "freeze_image_encoder": False,
         "use_teacher_momentum": True,
     },
-    "unfrozen_encoder": {
+    "frozen_encoder": {
         "description": "Fine-tune image encoder (no freezing)",
         "freeze_image_encoder": True,
         "use_teacher_momentum": True,

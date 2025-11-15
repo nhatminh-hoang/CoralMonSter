@@ -19,7 +19,7 @@ DATASET_ROOT="datasets/CoralScapes"
 DATASET_CACHE_DIR="${DATASET_ROOT}/cache"
 MAX_EPOCHS=40
 BATCH_SIZE=2
-NUM_WORKERS=4
+NUM_WORKERS=2
 
 HF_TOKEN_ARG=()
 if [[ -n "${HF_TOKEN}" ]]; then
@@ -37,6 +37,7 @@ CUDA_VISIBLE_DEVICES=4 python -m CoralMonSter.train \
   --max_epochs "${MAX_EPOCHS}" \
   --batch_size "${BATCH_SIZE}" \
   --num_workers "${NUM_WORKERS}" \
+  --profile \
   "${HF_TOKEN_ARG[@]}" &
 PID_NOSCHED=$!
 
@@ -51,7 +52,23 @@ CUDA_VISIBLE_DEVICES=5 python -m CoralMonSter.train \
   --max_epochs "${MAX_EPOCHS}" \
   --batch_size "${BATCH_SIZE}" \
   --num_workers "${NUM_WORKERS}" \
+  --profile \
   "${HF_TOKEN_ARG[@]}" &
 PID_NOCENTER=$!
 
-wait $PID_NOSCHED $PID_NOCENTER
+echo "===> Running scenario: CoralMonSter"
+CUDA_VISIBLE_DEVICES=6 python -m CoralMonSter.train \
+  --dataset coralscapes \
+  --dataset_root "${DATASET_ROOT}" \
+  --dataset_cache_dir "${DATASET_CACHE_DIR}" \
+  --scenario_name "coralscapes_CoralMonSter" \
+  --scenario_preset "full" \
+  --sam_checkpoint "${CHECKPOINT}" \
+  --max_epochs "${MAX_EPOCHS}" \
+  --batch_size "${BATCH_SIZE}" \
+  --num_workers "${NUM_WORKERS}" \
+  --profile \
+  "${HF_TOKEN_ARG[@]}" &
+PID_FULL=$!
+
+wait $PID_NOSCHED $PID_NOCENTER $PID_FULL
