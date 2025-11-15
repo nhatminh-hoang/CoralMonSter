@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,20 +42,8 @@ class CoralScapesConfig(HKCoralConfig):
             return
         try:
             cache_dir = str(self.dataset_cache_dir)
-            id2label_path = hf_hub_download(
-                repo_id=self.dataset_id,
-                filename="id2label.json",
-                repo_type="dataset",
-                cache_dir=cache_dir,
-                token=self.hf_token,
-            )
-            label2color_path = hf_hub_download(
-                repo_id=self.dataset_id,
-                filename="label2color.json",
-                repo_type="dataset",
-                cache_dir=cache_dir,
-                token=self.hf_token,
-            )
+            id2label_path = "/home/21013299/Minh/CoralMonSter/datasets/CoralScapes/cache/datasets--EPFL-ECEO--coralscapes/snapshots/acd72c757c59db055b800dc054a2291487e4566f/id2label.json"
+            label2color_path = "/home/21013299/Minh/CoralMonSter/datasets/CoralScapes/cache/datasets--EPFL-ECEO--coralscapes/snapshots/acd72c757c59db055b800dc054a2291487e4566f/label2color.json"
             with open(id2label_path, "r", encoding="utf-8") as fp:
                 id2label_raw = {int(k): v for k, v in json.load(fp).items()}
             id2label_raw.setdefault(0, "background")

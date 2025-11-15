@@ -67,4 +67,7 @@ python -m CoralMonSter.train \
 python evaluate_checkpoints.py \
   --sam_checkpoint "${CHECKPOINT}" \
   --dataset_root "${DATASET_ROOT}" \
-  --checkpoint_root checkpoints
+  --dataset_cache_dir "${DATASET_CACHE_DIR}" \
+  --checkpoint_root checkpoints \
+  --output coralscapes_checkpoint_evaluations.json \
+  --dataset_keyword coralscapes \
