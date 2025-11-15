@@ -21,7 +21,6 @@ def hkcoral_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     point_labels = [b["point_labels"] for b in batch]
     boxes: List[Optional[torch.Tensor]] = [b["box"] for b in batch]
     prompt_sets = [b.get("prompt_sets") for b in batch]
-    cpu_times = torch.stack([b.get("cpu_time", torch.zeros(1)) for b in batch])
 
     return {
         "images": images,
@@ -32,7 +31,6 @@ def hkcoral_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "point_labels": point_labels,
         "boxes": boxes,
         "prompt_sets": prompt_sets,
-        "cpu_times": cpu_times.squeeze(-1),
     }
 
 

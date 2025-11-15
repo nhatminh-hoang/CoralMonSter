@@ -62,7 +62,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--profile", action="store_true", help="Profile a single forward/backward pass.")
-    parser.add_argument("--compile", action="store_true", help="Compile the model for optimized execution.")
     parser.add_argument(
         "--gpu_devices",
         type=str,
@@ -137,9 +136,6 @@ def main() -> None:
     cfg.checkpoint_root = Path(args.output_dir)
 
     model = CoralModel(cfg).to(device)
-    if args.compile:
-        print("[Info] Compiling the model for optimized execution...")
-        model = torch.compile(model)
     if args.resume:
         state = torch.load(args.resume, map_location="cpu")
         model.load_state_dict(state.get("model", state), strict=False)
@@ -191,7 +187,6 @@ def main() -> None:
         shuffle=True,
         num_workers=cfg.optimization.num_workers,
         collate_fn=hkcoral_collate_fn,
-        pin_memory=True,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -199,7 +194,6 @@ def main() -> None:
         shuffle=False,
         num_workers=cfg.optimization.num_workers,
         collate_fn=hkcoral_collate_fn,
-        pin_memory=True,
     )
     test_loader = DataLoader(
         test_dataset,
@@ -207,7 +201,6 @@ def main() -> None:
         shuffle=False,
         num_workers=cfg.optimization.num_workers,
         collate_fn=hkcoral_collate_fn,
-        pin_memory=True,
     )
 
     trainer = CoralTrainer(
