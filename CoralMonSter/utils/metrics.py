@@ -75,7 +75,7 @@ class SegmentationMeter:
     def per_class_iou(self) -> List[float]:
         intersection = torch.diag(self.confusion)
         union = self.confusion.sum(1) + self.confusion.sum(0) - intersection
-        iou = torch.zeros_like(intersection)
+        iou = torch.full_like(intersection, float("nan"))
         valid = (union > 0) & self.eval_class_mask
         iou[valid] = intersection[valid] / union[valid]
         return iou.tolist()
