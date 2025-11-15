@@ -182,10 +182,18 @@ class CoralTrainer:
         )
         profiled = False
         component_sums: Dict[str, float] = {}
+        timing_totals = {
+            "data_io": 0.0,
+            "encoder_time": 0.0,
+            "student_time": 0.0,
+            "teacher_time": 0.0,
+        }
+        timing_steps = 0
         for batch in progress:
             io_start = time.time()
             batch = self._to_device(batch, device)
             data_io = time.time() - io_start
+            timing_totals["data_io"] += data_io
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 outputs = self.model(batch)
             loss = outputs["total_loss"]
@@ -217,7 +225,19 @@ class CoralTrainer:
                     label = key.replace("_loss", "")
                     loss_postfix[f"loss_{label}"] = f"{outputs[key].item():.4f}"
                     component_sums[key] = component_sums.get(key, 0.0) + outputs[key].item() * batch_size
-            progress.set_postfix(**loss_postfix)
+            for key in ("encoder_time", "student_time", "teacher_time"):
+                if key in outputs:
+                    timing_totals[key] += outputs[key]
+            timing_steps += 1
+            avg_postfix = {}
+            if timing_steps > 0:
+                avg_postfix = {
+                    "data_io_ms": f"{(timing_totals['data_io'] / timing_steps) * 1000:.1f}",
+                    "enc_ms": f"{(timing_totals['encoder_time'] / timing_steps) * 1000:.1f}",
+                    "stu_ms": f"{(timing_totals['student_time'] / timing_steps) * 1000:.1f}",
+                    "teach_ms": f"{(timing_totals['teacher_time'] / timing_steps) * 1000:.1f}",
+                }
+            progress.set_postfix({**loss_postfix, **avg_postfix})
 
             if profile_batch and not profiled:
                 teacher_time = outputs.get("teacher_time", 0.0)
