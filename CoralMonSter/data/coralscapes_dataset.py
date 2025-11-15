@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+import time
+
 import numpy as np
 import torch
 from datasets import load_dataset
@@ -70,18 +72,30 @@ class CoralScapesDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        timings: Dict[str, float] = {}
         sample = self.dataset[idx]
+
+        start = time.perf_counter()
         image = sample["image"].convert("RGB")
         label_img: Image.Image = sample["label"]
+        timings["load_io"] = time.perf_counter() - start
         file_name = sample.get("file_name") or f"coralscapes_{self.split}_{idx:06d}.png"
 
         original_size = torch.tensor((label_img.height, label_img.width), dtype=torch.long)
+        start = time.perf_counter()
         mask = torch.from_numpy(np.array(self.mask_resize(label_img), dtype=np.int64))
         mask = mask.clamp(min=0, max=self.num_classes - 1)
-        image_tensor = self.transform(image)
+        timings["mask_resize"] = time.perf_counter() - start
 
+        start = time.perf_counter()
+        image_tensor = self.transform(image)
+        timings["image_transform"] = time.perf_counter() - start
+
+        start = time.perf_counter()
         prompt = sample_prompt(mask, self.prompt_points, self.num_classes, self.ignore_label)
         prompt_sets = build_prompt_sets(mask, self.prompt_bins, self.num_classes, self.ignore_label)
+        timings["prompt_sampling"] = time.perf_counter() - start
+        timings["total"] = sum(timings.values())
 
         return {
             "image": image_tensor,
@@ -92,6 +106,7 @@ class CoralScapesDataset(Dataset):
             "point_labels": prompt.labels,
             "box": prompt.box,
             "prompt_sets": prompt_sets,
+            "timings": timings,
         }
 
 

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import time
+
 import numpy as np
 import torch
 from PIL import Image
@@ -84,16 +86,29 @@ class HKCoralDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        timings: Dict[str, float] = {}
         img_path, label_path = self.samples[idx]
+
+        start = time.perf_counter()
         image = Image.open(img_path).convert("RGB")
         mask = Image.open(label_path)
+        timings["load_io"] = time.perf_counter() - start
+
         original_size = torch.tensor(mask.size[::-1], dtype=torch.long)  # (H, W)
 
+        start = time.perf_counter()
         mask = torch.from_numpy(np.array(self.mask_resize(mask), dtype=np.int64))
-        image = self.transform(image)
+        timings["mask_resize"] = time.perf_counter() - start
 
+        start = time.perf_counter()
+        image = self.transform(image)
+        timings["image_transform"] = time.perf_counter() - start
+
+        start = time.perf_counter()
         prompt = sample_prompt(mask, self.prompt_points, self.num_classes, self.ignore_label)
         prompt_sets = build_prompt_sets(mask, self.prompt_bins, self.num_classes, self.ignore_label)
+        timings["prompt_sampling"] = time.perf_counter() - start
+        timings["total"] = sum(timings.values())
 
         return {
             "image": image,
@@ -104,6 +119,7 @@ class HKCoralDataset(Dataset):
             "point_labels": prompt.labels,
             "box": prompt.box,
             "prompt_sets": prompt_sets,
+            "timings": timings,
         }
 
 

@@ -22,7 +22,15 @@ def hkcoral_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     boxes: List[Optional[torch.Tensor]] = [b["box"] for b in batch]
     prompt_sets = [b.get("prompt_sets") for b in batch]
 
-    return {
+    timing_totals: Dict[str, float] = {}
+    for sample in batch:
+        sample_timing = sample.get("timings")
+        if not sample_timing:
+            continue
+        for key, value in sample_timing.items():
+            timing_totals[key] = timing_totals.get(key, 0.0) + float(value)
+
+    collated = {
         "images": images,
         "masks": masks,
         "original_sizes": original_sizes,
@@ -32,6 +40,11 @@ def hkcoral_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "boxes": boxes,
         "prompt_sets": prompt_sets,
     }
+
+    if timing_totals:
+        collated["timings"] = timing_totals
+
+    return collated
 
 
 __all__ = [
