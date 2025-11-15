@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import time
 
 import numpy as np
 import torch
@@ -84,6 +85,7 @@ class HKCoralDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        start = time.time()
         img_path, label_path = self.samples[idx]
         image = Image.open(img_path).convert("RGB")
         mask = Image.open(label_path)
@@ -94,6 +96,7 @@ class HKCoralDataset(Dataset):
 
         prompt = sample_prompt(mask, self.prompt_points, self.num_classes, self.ignore_label)
         prompt_sets = build_prompt_sets(mask, self.prompt_bins, self.num_classes, self.ignore_label)
+        cpu_time = time.time() - start
 
         return {
             "image": image,
@@ -104,6 +107,7 @@ class HKCoralDataset(Dataset):
             "point_labels": prompt.labels,
             "box": prompt.box,
             "prompt_sets": prompt_sets,
+            "cpu_time": torch.tensor(cpu_time, dtype=torch.float32),
         }
 
 

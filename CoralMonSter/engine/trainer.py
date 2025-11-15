@@ -190,6 +190,7 @@ class CoralTrainer:
             "backward_time": 0.0,
             "logging_time": 0.0,
             "loader_wait": 0.0,
+            "cpu_prep": 0.0,
         }
         timing_steps = 0
         prev_step_end = time.time()
@@ -200,6 +201,9 @@ class CoralTrainer:
             batch = self._to_device(batch, device)
             data_io = time.time() - io_start
             timing_totals["data_io"] += data_io
+            cpu_times = batch.get("cpu_times")
+            if cpu_times is not None and torch.is_tensor(cpu_times):
+                timing_totals["cpu_prep"] += cpu_times.mean().item()
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 outputs = self.model(batch)
             if device.type == "cuda":
@@ -252,6 +256,7 @@ class CoralTrainer:
                     "bwd_ms": f"{(timing_totals['backward_time'] / timing_steps) * 1000:.1f}",
                     "log_ms": f"{(timing_totals['logging_time'] / timing_steps) * 1000:.1f}",
                     "load_ms": f"{(timing_totals['loader_wait'] / timing_steps) * 1000:.1f}",
+                    "cpu_ms": f"{(timing_totals['cpu_prep'] / timing_steps) * 1000:.1f}",
                 }
             progress.set_postfix({**loss_postfix, **avg_postfix})
             timing_totals["logging_time"] += time.time() - log_start
