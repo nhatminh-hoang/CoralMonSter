@@ -187,6 +187,7 @@ class CoralTrainer:
             "encoder_time": 0.0,
             "student_time": 0.0,
             "teacher_time": 0.0,
+            "backward_time": 0.0,
         }
         timing_steps = 0
         for batch in progress:
@@ -197,6 +198,7 @@ class CoralTrainer:
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 outputs = self.model(batch)
             loss = outputs["total_loss"]
+            backward_start = time.time()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(),
@@ -204,6 +206,7 @@ class CoralTrainer:
             )
             self.optimizer.step()
             self.optimizer.zero_grad()
+            timing_totals["backward_time"] += time.time() - backward_start
             if (
                 self.cfg.optimization.use_teacher_momentum
                 and getattr(self.model, "distillation_enabled", True)
@@ -236,6 +239,7 @@ class CoralTrainer:
                     "enc_ms": f"{(timing_totals['encoder_time'] / timing_steps) * 1000:.1f}",
                     "stu_ms": f"{(timing_totals['student_time'] / timing_steps) * 1000:.1f}",
                     "teach_ms": f"{(timing_totals['teacher_time'] / timing_steps) * 1000:.1f}",
+                    "bwd_ms": f"{(timing_totals['backward_time'] / timing_steps) * 1000:.1f}",
                 }
             progress.set_postfix({**loss_postfix, **avg_postfix})
 
