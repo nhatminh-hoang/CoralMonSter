@@ -9,11 +9,10 @@ from typing import Dict, List, Optional, Tuple
 
 import time
 
-import numpy as np
 import torch
-from PIL import Image
 from torch.utils.data import Dataset
-from torchvision import transforms
+from torchvision.io import ImageReadMode, read_image
+from torchvision.transforms import v2 as T
 
 
 @dataclass
@@ -73,14 +72,14 @@ class HKCoralDataset(Dataset):
         self.ignore_label = ignore_label
         self.prompt_points = prompt_points
         self.prompt_bins = prompt_bins
-        self.transform = transforms.Compose(
+        self.image_size = image_size
+        self.image_transform = T.Compose(
             [
-                transforms.Resize((image_size, image_size), interpolation=Image.BILINEAR),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=mean, std=std),
+                T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BILINEAR, antialias=True),
+                T.ToDtype(torch.float32, scale=True),
+                T.Normalize(mean=mean, std=std),
             ]
         )
-        self.mask_resize = transforms.Resize((image_size, image_size), interpolation=Image.NEAREST)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -90,18 +89,22 @@ class HKCoralDataset(Dataset):
         img_path, label_path = self.samples[idx]
 
         start = time.perf_counter()
-        image = Image.open(img_path).convert("RGB")
-        mask = Image.open(label_path)
+        image = read_image(str(img_path), mode=ImageReadMode.RGB)
+        mask = read_image(str(label_path), mode=ImageReadMode.GRAY).squeeze(0)
         timings["load_io"] = time.perf_counter() - start
 
-        original_size = torch.tensor(mask.size[::-1], dtype=torch.long)  # (H, W)
+        original_size = torch.tensor(mask.shape[-2:], dtype=torch.long)
 
         start = time.perf_counter()
-        mask = torch.from_numpy(np.array(self.mask_resize(mask), dtype=np.int64))
+        mask = T.functional.resize(
+            mask.unsqueeze(0),
+            size=(self.image_size, self.image_size),
+            interpolation=T.InterpolationMode.NEAREST,
+        ).squeeze(0).to(torch.int64)
         timings["mask_resize"] = time.perf_counter() - start
 
         start = time.perf_counter()
-        image = self.transform(image)
+        image = self.image_transform(image)
         timings["image_transform"] = time.perf_counter() - start
 
         start = time.perf_counter()
