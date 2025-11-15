@@ -188,6 +188,7 @@ class CoralTrainer:
             "student_time": 0.0,
             "teacher_time": 0.0,
             "backward_time": 0.0,
+            "logging_time": 0.0,
         }
         timing_steps = 0
         for batch in progress:
@@ -232,6 +233,7 @@ class CoralTrainer:
                 if key in outputs:
                     timing_totals[key] += outputs[key]
             timing_steps += 1
+            log_start = time.time()
             avg_postfix = {}
             if timing_steps > 0:
                 avg_postfix = {
@@ -240,8 +242,10 @@ class CoralTrainer:
                     "stu_ms": f"{(timing_totals['student_time'] / timing_steps) * 1000:.1f}",
                     "teach_ms": f"{(timing_totals['teacher_time'] / timing_steps) * 1000:.1f}",
                     "bwd_ms": f"{(timing_totals['backward_time'] / timing_steps) * 1000:.1f}",
+                    "log_ms": f"{(timing_totals['logging_time'] / timing_steps) * 1000:.1f}",
                 }
             progress.set_postfix({**loss_postfix, **avg_postfix})
+            timing_totals["logging_time"] += time.time() - log_start
 
             if profile_batch and not profiled:
                 teacher_time = outputs.get("teacher_time", 0.0)
