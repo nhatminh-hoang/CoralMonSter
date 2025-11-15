@@ -34,6 +34,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=str, default="checkpoint_evaluations.json", help="Where to dump aggregated results.")
     parser.add_argument("--log_root", type=str, default="logs", help="Base log directory (used to satisfy config paths).")
     parser.add_argument("--fig_root", type=str, default="confusion_figs", help="Directory for confusion matrix plots.")
+    parser.add_argument(
+        "--dataset_keyword",
+        type=str,
+        default=None,
+        help="Only evaluate checkpoints whose path contains this (case-insensitive) keyword."
+    )
     return parser.parse_args()
 
 
@@ -123,8 +129,16 @@ def main() -> None:
     checkpoint_paths = [
         p for p in sorted(Path(args.checkpoint_root).rglob("*.pth")) if not p.name.endswith("_last.pth")
     ]
+    if args.dataset_keyword:
+        keyword = args.dataset_keyword.lower()
+        checkpoint_paths = [p for p in checkpoint_paths if keyword in str(p).lower()]
     if not checkpoint_paths:
-        print(f"No eligible checkpoints found under '{args.checkpoint_root}'.")
+        if args.dataset_keyword:
+            print(
+                f"No eligible checkpoints under '{args.checkpoint_root}' containing keyword '{args.dataset_keyword}'."
+            )
+        else:
+            print(f"No eligible checkpoints found under '{args.checkpoint_root}'.")
         return
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
