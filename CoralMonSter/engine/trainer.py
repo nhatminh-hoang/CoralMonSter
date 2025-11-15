@@ -170,7 +170,11 @@ class CoralTrainer:
     ) -> tuple[float, float, float, Dict[str, float], list[float], torch.Tensor]:
         loss_sum = 0.0
         count = 0
-        meter = SegmentationMeter(self.cfg.num_classes, self.cfg.ignore_label)
+        meter = SegmentationMeter(
+            self.cfg.num_classes,
+            self.cfg.ignore_label,
+            getattr(self.cfg, "eval_ignore_classes", None),
+        )
         progress = tqdm(
             loader,
             desc=f"Epoch {epoch+1}/{self.cfg.optimization.max_epochs}",
@@ -246,7 +250,11 @@ class CoralTrainer:
         self.model.eval()
         loss_sum = 0.0
         count = 0
-        meter = SegmentationMeter(self.cfg.num_classes, self.cfg.ignore_label)
+        meter = SegmentationMeter(
+            self.cfg.num_classes,
+            self.cfg.ignore_label,
+            getattr(self.cfg, "eval_ignore_classes", None),
+        )
         preview = None
         if visualize_dir is not None:
             visualize_dir.mkdir(parents=True, exist_ok=True)

@@ -83,6 +83,7 @@ class HKCoralConfig:
     optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
     distillation: DistillationConfig = field(default_factory=DistillationConfig)
     prompt_bins: Tuple[int, ...] = (1, 2, 4, 10)
+    eval_ignore_classes: Tuple[int, ...] = ()
 
     def resolve_paths(self) -> "HKCoralConfig":
         """Expand user paths to absolute ``Path`` objects for downstream code."""

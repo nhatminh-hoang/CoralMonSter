@@ -21,6 +21,7 @@ class CoralScapesConfig(HKCoralConfig):
     dataset_id: str = "EPFL-ECEO/coralscapes"
     hf_token: Optional[str] = None
     num_classes: int = 40
+    eval_ignore_classes: Tuple[int, ...] = (0,)
     _class_names: Optional[List[str]] = field(default=None, init=False, repr=False)
     _class_palette: Optional[List[Tuple[int, int, int]]] = field(default=None, init=False, repr=False)
 
