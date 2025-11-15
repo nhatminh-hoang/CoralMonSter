@@ -202,9 +202,13 @@ class CoralTrainer:
             timing_totals["data_io"] += data_io
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 outputs = self.model(batch)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
             loss = outputs["total_loss"]
             backward_start = time.time()
             loss.backward()
+            if device.type == "cuda":
+                torch.cuda.synchronize()
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(),
                 self.cfg.optimization.grad_clip_norm,
