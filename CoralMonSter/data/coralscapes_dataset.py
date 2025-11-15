@@ -8,12 +8,12 @@ from typing import Dict, Optional, Tuple
 
 import time
 
-import numpy as np
 import torch
 from datasets import load_dataset
 from PIL import Image
 from torch.utils.data import Dataset
-from torchvision import transforms
+from torchvision.transforms import v2 as T
+from torchvision.transforms import functional as F
 
 from .hkcoral_dataset import PromptSample, build_prompt_sets, sample_prompt
 
@@ -59,14 +59,15 @@ class CoralScapesDataset(Dataset):
             cache_dir=str(self.cache_dir) if self.cache_dir is not None else None,
             token=self.hf_token,
         )
-        self.transform = transforms.Compose(
+        self.image_size = image_size
+        self.image_transform = T.Compose(
             [
-                transforms.Resize((image_size, image_size), interpolation=Image.BILINEAR),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=mean, std=std),
+                T.ToImage(),
+                T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BILINEAR, antialias=True),
+                T.ToDtype(torch.float32, scale=True),
+                T.Normalize(mean=mean, std=std),
             ]
         )
-        self.mask_resize = transforms.Resize((image_size, image_size), interpolation=Image.NEAREST)
 
     def __len__(self) -> int:
         return len(self.dataset)
@@ -83,12 +84,16 @@ class CoralScapesDataset(Dataset):
 
         original_size = torch.tensor((label_img.height, label_img.width), dtype=torch.long)
         start = time.perf_counter()
-        mask = torch.from_numpy(np.array(self.mask_resize(label_img), dtype=np.int64))
-        mask = mask.clamp(min=0, max=self.num_classes - 1)
+        mask = F.resize(
+            F.pil_to_tensor(label_img),
+            size=(self.image_size, self.image_size),
+            interpolation=T.InterpolationMode.NEAREST,
+        )
+        mask = mask.squeeze(0).to(torch.int64).clamp(min=0, max=self.num_classes - 1)
         timings["mask_resize"] = time.perf_counter() - start
 
         start = time.perf_counter()
-        image_tensor = self.transform(image)
+        image_tensor = self.image_transform(image)
         timings["image_transform"] = time.perf_counter() - start
 
         start = time.perf_counter()
