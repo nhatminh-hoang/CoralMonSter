@@ -189,9 +189,13 @@ class CoralTrainer:
             "teacher_time": 0.0,
             "backward_time": 0.0,
             "logging_time": 0.0,
+            "loader_wait": 0.0,
         }
         timing_steps = 0
+        prev_step_end = time.time()
         for batch in progress:
+            loader_wait = time.time() - prev_step_end
+            timing_totals["loader_wait"] += max(loader_wait, 0.0)
             io_start = time.time()
             batch = self._to_device(batch, device)
             data_io = time.time() - io_start
@@ -243,9 +247,11 @@ class CoralTrainer:
                     "teach_ms": f"{(timing_totals['teacher_time'] / timing_steps) * 1000:.1f}",
                     "bwd_ms": f"{(timing_totals['backward_time'] / timing_steps) * 1000:.1f}",
                     "log_ms": f"{(timing_totals['logging_time'] / timing_steps) * 1000:.1f}",
+                    "load_ms": f"{(timing_totals['loader_wait'] / timing_steps) * 1000:.1f}",
                 }
             progress.set_postfix({**loss_postfix, **avg_postfix})
             timing_totals["logging_time"] += time.time() - log_start
+            prev_step_end = time.time()
 
             if profile_batch and not profiled:
                 teacher_time = outputs.get("teacher_time", 0.0)
