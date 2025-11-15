@@ -191,6 +191,7 @@ def main() -> None:
         shuffle=True,
         num_workers=cfg.optimization.num_workers,
         collate_fn=hkcoral_collate_fn,
+        pin_memory=True,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -198,6 +199,7 @@ def main() -> None:
         shuffle=False,
         num_workers=cfg.optimization.num_workers,
         collate_fn=hkcoral_collate_fn,
+        pin_memory=True,
     )
     test_loader = DataLoader(
         test_dataset,
@@ -205,6 +207,7 @@ def main() -> None:
         shuffle=False,
         num_workers=cfg.optimization.num_workers,
         collate_fn=hkcoral_collate_fn,
+        pin_memory=True,
     )
 
     trainer = CoralTrainer(
