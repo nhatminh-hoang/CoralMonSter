@@ -110,18 +110,32 @@ fi
 #   --learning_rate "${LR}" \
 #   --prompt_bins 10 
 
-echo "===> Running scenario: CoralMonSter_4points"
+# echo "===> Running scenario: CoralMonSter_4points"
+# python -m CoralMonSter.train \
+#   --dataset coralscapes \
+#   --dataset_root "${DATASET_ROOT}" \
+#   --dataset_cache_dir "${DATASET_CACHE_DIR}" \
+#   --scenario_name "coralscapes_CoralMonSter_4points" \
+#   --scenario_preset "full" \
+#   --sam_checkpoint "${CHECKPOINT}" \
+#   --max_epochs "${MAX_EPOCHS}" \
+#   --batch_size "${BATCH_SIZE}" \
+#   --num_workers "${NUM_WORKERS}" \
+#   --profile \
+#   --learning_rate "${LR}" \
+#   --prompt_bins 4
+
+echo "===> Running scenario: CoralMonSter_freeze_4points_Sharehypernet_OthoInit"
 python -m CoralMonSter.train \
   --dataset coralscapes \
   --dataset_root "${DATASET_ROOT}" \
   --dataset_cache_dir "${DATASET_CACHE_DIR}" \
-  --scenario_name "coralscapes_CoralMonSter_4points" \
-  --scenario_preset "full" \
+  --scenario_name "coralscapes_CoralMonSter_freeze_4points_Sharehypernet_OthoInit" \
+  --scenario_preset "frozen_encoder" \
   --sam_checkpoint "${CHECKPOINT}" \
   --max_epochs "${MAX_EPOCHS}" \
   --batch_size "${BATCH_SIZE}" \
   --num_workers "${NUM_WORKERS}" \
-  --profile \
   --learning_rate "${LR}" \
   --prompt_bins 4
 
