@@ -36,7 +36,7 @@ class DistillationConfig:
     """
 
     dice_weight: float = 1.0
-    ce_weight: float = 0.5
+    ce_weight: float = 0.1
     mask_kd_weight: float = 1.0
     token_kd_weight: float = 1.0
     token_kd_metric: str = "ce"
@@ -84,6 +84,9 @@ class HKCoralConfig:
     distillation: DistillationConfig = field(default_factory=DistillationConfig)
     prompt_bins: Tuple[int, ...] = (1, 2, 4, 10)
     eval_ignore_classes: Tuple[int, ...] = ()
+    enable_pca_logging: bool = False
+    pca_samples_per_epoch: int = 2
+    pca_log_dirname: str = "encoder_pca"
 
     def resolve_paths(self) -> "HKCoralConfig":
         """Expand user paths to absolute ``Path`` objects for downstream code."""

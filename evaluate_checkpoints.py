@@ -145,7 +145,7 @@ def evaluate_checkpoint(
     state = torch.load(path, map_location="cpu")
     model.load_state_dict(state.get("model", state), strict=False)
     trainer = CoralTrainer(model, cfg)
-    metrics = trainer.evaluate(loader, device, visualize_dir=visualize_dir)
+    metrics = trainer.evaluate(loader, device, stage=cfg.split, visualize_dir=visualize_dir)
     return {
         "checkpoint": str(path),
         "scenario": cfg.scenario_name,

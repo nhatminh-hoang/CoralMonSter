@@ -5,5 +5,9 @@ checkpoints/
 logs/
 train_outs/
 confusion_figs/
+.github/
+semantic_seg_ckpt/
 
 *.json
+*.tex
+*.sty

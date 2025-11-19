@@ -6,3 +6,7 @@ tqdm>=4.65
 datasets>=2.15
 huggingface_hub>=0.19
 pycocotools>=2.0
+transformers>=4.37
+peft>=0.7
+segmentation-models-pytorch>=0.3.3
+timm>=0.9

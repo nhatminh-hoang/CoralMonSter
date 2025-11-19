@@ -22,6 +22,7 @@ from CoralMonSter.utils import (
     save_checkpoint,
     save_segmentation_comparison,
     save_training_curves,
+    save_pca_overlay,
 )
 
 
@@ -50,6 +51,7 @@ class CoralTrainer:
         self.last_val_loss = 0.0
         self.last_val_miou = 0.0
         self.last_val_pix = 0.0
+        self.pca_counts = {"train": 0, "val": 0, "test": 0}
 
     def fit(
         self,
@@ -88,7 +90,7 @@ class CoralTrainer:
             duration = time.time() - start
             val_metrics = {"loss": 0.0, "miou": 0.0, "pix_acc": 0.0, "preview": None, "components": {}}
             if val_loader is not None:
-                val_metrics = self.evaluate(val_loader, device)
+                val_metrics = self.evaluate(val_loader, device, stage="val", epoch_idx=epoch)
                 self.last_val_loss = val_metrics["loss"]
                 self.last_val_miou = val_metrics["miou"]
                 self.last_val_pix = val_metrics["pix_acc"]
@@ -148,7 +150,13 @@ class CoralTrainer:
 
         if test_loader is not None:
             test_vis_dir = self.log_dir / "test_visuals"
-            test_metrics = self.evaluate(test_loader, device, visualize_dir=test_vis_dir)
+            test_metrics = self.evaluate(
+                test_loader,
+                device,
+                stage="test",
+                epoch_idx=self.cfg.optimization.max_epochs - 1,
+                visualize_dir=test_vis_dir,
+            )
             self.logger.info(
                 "Test | loss=%.4f | mIoU=%.4f | pixAcc=%.4f",
                 test_metrics["loss"],
@@ -175,6 +183,7 @@ class CoralTrainer:
             self.cfg.ignore_label,
             getattr(self.cfg, "eval_ignore_classes", None),
         )
+        self.pca_counts["train"] = 0
         progress = tqdm(
             loader,
             desc=f"Epoch {epoch+1}/{self.cfg.optimization.max_epochs}",
@@ -220,6 +229,8 @@ class CoralTrainer:
                 and epoch != 0
             ):
                 self.model.update_teacher()
+
+            self._maybe_log_pca("train", epoch, batch, outputs)
 
             batch_size = batch["images"].shape[0]
             loss_sum += loss.item() * batch_size
@@ -275,6 +286,8 @@ class CoralTrainer:
         self,
         loader: DataLoader,
         device: torch.device,
+        stage: str = "val",
+        epoch_idx: Optional[int] = None,
         visualize_dir: Optional[Path] = None,
     ) -> Dict[str, object]:
         self.model.eval()
@@ -289,10 +302,12 @@ class CoralTrainer:
         if visualize_dir is not None:
             visualize_dir.mkdir(parents=True, exist_ok=True)
         component_sums: Dict[str, float] = {}
+        self.pca_counts[stage] = 0
         for batch in tqdm(loader):
             batch = self._to_device(batch, device)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 outputs = self.model.forward(batch)
+            self._maybe_log_pca(stage, epoch_idx, batch, outputs)
             batch_size = batch["images"].shape[0]
             loss_sum += outputs["total_loss"].item() * batch_size
             count += batch_size
@@ -413,3 +428,52 @@ class CoralTrainer:
         metrics_path = self.log_dir / "metrics.json"
         with open(metrics_path, "w", encoding="utf-8") as f:
             json.dump(self.history, f, indent=2)
+
+    def _maybe_log_pca(
+        self,
+        stage: str,
+        epoch_idx: Optional[int],
+        batch: Dict[str, torch.Tensor],
+        outputs: Dict[str, torch.Tensor],
+    ) -> None:
+        if not getattr(self.cfg, "enable_pca_logging", False):
+            return
+        limit = max(0, getattr(self.cfg, "pca_samples_per_epoch", 0))
+        if limit == 0:
+            return
+        if stage not in self.pca_counts:
+            self.pca_counts[stage] = 0
+        if self.pca_counts[stage] >= limit:
+            return
+        embeddings = outputs.get("encoder_embeddings")
+        if embeddings is None:
+            return
+        images = batch.get("images")
+        if images is None:
+            return
+        file_names = batch.get("file_names") or []
+        remaining = limit - self.pca_counts[stage]
+        save_dir = self.log_dir / getattr(self.cfg, "pca_log_dirname", "encoder_pca") / stage
+        if epoch_idx is not None:
+            save_dir = save_dir / f"epoch_{epoch_idx + 1:03d}"
+        for idx in range(min(remaining, embeddings.shape[0])):
+            name = file_names[idx] if idx < len(file_names) else f"sample_{self.pca_counts[stage] + 1}"
+            stem = Path(name).stem
+            out_path = save_dir / f"{stem}_pca.png"
+            title = f"{stage.upper()} | {name}"
+            image_tensor = images[idx].detach().cpu()
+            embedding_tensor = embeddings[idx]
+            try:
+                save_pca_overlay(
+                    image_tensor,
+                    embedding_tensor,
+                    self.cfg.image_mean,
+                    self.cfg.image_std,
+                    out_path,
+                    title,
+                )
+            except Exception as exc:  # pragma: no cover - visualization failures shouldn't break training
+                self.logger.warning("Failed to save PCA overlay for %s: %s", name, exc)
+            self.pca_counts[stage] += 1
+            if self.pca_counts[stage] >= limit:
+                break

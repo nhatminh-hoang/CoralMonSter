@@ -72,6 +72,9 @@ class CoralMonSter(nn.Module):
         image_embeddings = self.image_encoder(images)
         encoder_time = time.time() - enc_start
         image_pe = self._image_pe(batch_size, images.device)
+        encoder_snapshot = None
+        if getattr(self.cfg, "enable_pca_logging", False):
+            encoder_snapshot = image_embeddings.detach()
 
         student_start = time.time()
         student_out = self.student_decoder(image_embeddings, image_pe)
@@ -151,6 +154,8 @@ class CoralMonSter(nn.Module):
             "student_time": student_time,
             "teacher_time": teacher_time,
         }
+        if encoder_snapshot is not None:
+            outputs["encoder_embeddings"] = encoder_snapshot
         outputs.update(losses)
         outputs.update(aux_losses)
         return outputs

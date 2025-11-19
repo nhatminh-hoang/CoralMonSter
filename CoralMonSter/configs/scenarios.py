@@ -20,7 +20,7 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
     "no_scheduler": {
         "description": "Disable LR scheduler",
         "use_lr_scheduler": False,
-        "freeze_image_encoder": False,
+        "freeze_image_encoder": True,
         "use_teacher_momentum": True,
         "center_momentum": 0.99,
     },

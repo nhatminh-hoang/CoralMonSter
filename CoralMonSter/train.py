@@ -11,7 +11,7 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -32,6 +32,30 @@ def infer_model_type_from_checkpoint(path: str) -> Optional[str]:
         if candidate in name:
             return candidate
     return None
+
+
+def _parse_prompt_bins(value: str) -> Tuple[int, ...]:
+    bins = []
+    for chunk in value.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            count = int(chunk)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"Prompt bin '{chunk}' is not a valid integer."
+            ) from exc
+        if count <= 0:
+            raise argparse.ArgumentTypeError(
+                f"Prompt bin '{chunk}' must be a positive integer."
+            )
+        bins.append(count)
+    if not bins:
+        raise argparse.ArgumentTypeError(
+            "--prompt_bins requires at least one positive integer."
+        )
+    return tuple(bins)
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +83,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ema_momentum_min", type=float, default=0.996)
     parser.add_argument("--ema_momentum_max", type=float, default=1.0)
     parser.add_argument("--output_dir", type=str, default="checkpoints")
+    parser.add_argument("--log_pca_features", action="store_true", help="Enable PCA visualizations of encoder features during training/eval.")
+    parser.add_argument("--pca_samples_per_epoch", type=int, default=2, help="Max number of PCA visualizations per stage/epoch.")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--profile", action="store_true", help="Profile a single forward/backward pass.")
@@ -67,6 +93,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Comma-separated list of GPU device indices to use (e.g., '5,6,7').",
+    )
+    parser.add_argument(
+        "--prompt_bins",
+        type=_parse_prompt_bins,
+        default=None,
+        help="Comma-separated prompt counts for teacher sampling (e.g., '1,2,4,10').",
     )
     parser.add_argument("--train_subset", type=int, default=None, help="Limit number of training samples per epoch.")
     parser.add_argument("--val_subset", type=int, default=None, help="Limit number of validation samples.")
@@ -126,6 +158,8 @@ def main() -> None:
     cfg.freeze_image_encoder = True
     if args.scenario_preset:
         cfg = apply_scenario_preset(cfg, args.scenario_preset)
+    if args.prompt_bins:
+        cfg.prompt_bins = args.prompt_bins
     cfg.optimization.batch_size = args.batch_size
     cfg.optimization.num_workers = args.num_workers
     cfg.optimization.max_epochs = args.max_epochs
@@ -134,6 +168,8 @@ def main() -> None:
     cfg.optimization.ema_momentum_min = args.ema_momentum_min
     cfg.optimization.ema_momentum_max = args.ema_momentum_max
     cfg.checkpoint_root = Path(args.output_dir)
+    cfg.enable_pca_logging = bool(args.log_pca_features)
+    cfg.pca_samples_per_epoch = max(0, args.pca_samples_per_epoch)
 
     model = CoralModel(cfg).to(device)
     if args.resume:
