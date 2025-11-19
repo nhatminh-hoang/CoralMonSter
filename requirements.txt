@@ -1,5 +1,6 @@
 torch
 torchvision
+matplotlib
 numpy
 Pillow
 tqdm
@@ -7,6 +8,7 @@ datasets
 huggingface_hub
 pycocotools
 transformers
+huggingface_hub
 peft
 segmentation-models-pytorch
 timm

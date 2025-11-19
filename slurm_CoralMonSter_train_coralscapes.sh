@@ -95,12 +95,27 @@ fi
 #   --profile \
 #   --learning_rate "${LR}"
 
-echo "===> Running scenario: CoralMonSter_10points"
+# echo "===> Running scenario: CoralMonSter_10points"
+# python -m CoralMonSter.train \
+#   --dataset coralscapes \
+#   --dataset_root "${DATASET_ROOT}" \
+#   --dataset_cache_dir "${DATASET_CACHE_DIR}" \
+#   --scenario_name "coralscapes_CoralMonSter_10points" \
+#   --scenario_preset "full" \
+#   --sam_checkpoint "${CHECKPOINT}" \
+#   --max_epochs "${MAX_EPOCHS}" \
+#   --batch_size "${BATCH_SIZE}" \
+#   --num_workers "${NUM_WORKERS}" \
+#   --profile \
+#   --learning_rate "${LR}" \
+#   --prompt_bins 10 
+
+echo "===> Running scenario: CoralMonSter_4points"
 python -m CoralMonSter.train \
   --dataset coralscapes \
   --dataset_root "${DATASET_ROOT}" \
   --dataset_cache_dir "${DATASET_CACHE_DIR}" \
-  --scenario_name "coralscapes_CoralMonSter_10points" \
+  --scenario_name "coralscapes_CoralMonSter_4points" \
   --scenario_preset "full" \
   --sam_checkpoint "${CHECKPOINT}" \
   --max_epochs "${MAX_EPOCHS}" \
@@ -108,7 +123,7 @@ python -m CoralMonSter.train \
   --num_workers "${NUM_WORKERS}" \
   --profile \
   --learning_rate "${LR}" \
-  --prompt_bins 10 
+  --prompt_bins 4
 
 python evaluate_checkpoints.py \
   --sam_checkpoint "${CHECKPOINT}" \
