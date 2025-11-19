@@ -18,7 +18,7 @@ CHECKPOINT="checkpoints/vit_b_coralscop.pth"
 DATASET_ROOT="datasets/CoralScapes"
 DATASET_CACHE_DIR="${DATASET_ROOT}/cache"
 MAX_EPOCHS=60
-BATCH_SIZE=2
+BATCH_SIZE=4
 NUM_WORKERS=2
 LR=1e-5
 HF_TOKEN_ARG=()
@@ -74,22 +74,37 @@ fi
 #   "${HF_TOKEN_ARG[@]}" &
 # PID_FULL=$!
 
-echo "===> Running scenario: CoralMonSter_4points"
+echo "===> Running scenario: CoralMonSter_freeze_4points"
 CUDA_VISIBLE_DEVICES=2 python -m CoralMonSter.train \
   --dataset coralscapes \
   --dataset_root "${DATASET_ROOT}" \
   --dataset_cache_dir "${DATASET_CACHE_DIR}" \
-  --scenario_name "coralscapes_CoralMonSter_4points" \
-  --scenario_preset "full" \
+  --scenario_name "coralscapes_CoralMonSter_freeze_4points" \
+  --scenario_preset "frozen_encoder" \
   --sam_checkpoint "${CHECKPOINT}" \
   --max_epochs "${MAX_EPOCHS}" \
   --batch_size "${BATCH_SIZE}" \
   --num_workers "${NUM_WORKERS}" \
-  --profile \
   --learning_rate "${LR}" \
   --prompt_bins 4 \
   "${HF_TOKEN_ARG[@]}" &
-PID_FULL_4POINTS=$!
+PID_FREEZE_4POINTS=$!
+
+echo "===> Running scenario: CoralMonSter_freeze_10points"
+CUDA_VISIBLE_DEVICES=3 python -m CoralMonSter.train \
+  --dataset coralscapes \
+  --dataset_root "${DATASET_ROOT}" \
+  --dataset_cache_dir "${DATASET_CACHE_DIR}" \
+  --scenario_name "coralscapes_CoralMonSter_freeze_10points" \
+  --scenario_preset "frozen_encoder" \
+  --sam_checkpoint "${CHECKPOINT}" \
+  --max_epochs "${MAX_EPOCHS}" \
+  --batch_size "${BATCH_SIZE}" \
+  --num_workers "${NUM_WORKERS}" \
+  --learning_rate "${LR}" \
+  --prompt_bins 10 \
+  "${HF_TOKEN_ARG[@]}" &
+PID_FREEZE_10POINTS=$!
 
 # echo "===> Running scenario: CoralMonSter_10points"
 # CUDA_VISIBLE_DEVICES=7 python -m CoralMonSter.train \
@@ -108,4 +123,4 @@ PID_FULL_4POINTS=$!
 #   "${HF_TOKEN_ARG[@]}" &
 # PID_FULL_10POINTS=$!
 
-wait $PID_NOSCHED $PID_NOCENTER $PID_FULL $PID_FULL_4POINTS $PID_FULL_10POINTS
+wait $PID_NOSCHED $PID_NOCENTER $PID_FULL $PID_FREEZE_4POINTS $PID_FREEZE_10POINTS # $PID_FULL_10POINTS

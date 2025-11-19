@@ -61,8 +61,8 @@ class CoralScapesConfig(HKCoralConfig):
                 print(
                     "[Warning] Failed to download CoralScapes metadata from HuggingFace Hub. Using local cached files."
                 )
-            id2label_path = "/home/22010759/MinhK15/CoralMonSter/datasets/CoralScapes/cache/datasets--EPFL-ECEO--coralscapes/snapshots/acd72c757c59db055b800dc054a2291487e4566f/id2label.json"
-            label2color_path = "/home/22010759/MinhK15/CoralMonSter/datasets/CoralScapes/cache/datasets--EPFL-ECEO--coralscapes/snapshots/acd72c757c59db055b800dc054a2291487e4566f/label2color.json"
+            id2label_path = "datasets/CoralScapes/cache/datasets--EPFL-ECEO--coralscapes/snapshots/acd72c757c59db055b800dc054a2291487e4566f/id2label.json"
+            label2color_path = "datasets/CoralScapes/cache/datasets--EPFL-ECEO--coralscapes/snapshots/acd72c757c59db055b800dc054a2291487e4566f/label2color.json"
             with open(id2label_path, "r", encoding="utf-8") as fp:
                 id2label_raw = {int(k): v for k, v in json.load(fp).items()}
             id2label_raw.setdefault(0, "background")
