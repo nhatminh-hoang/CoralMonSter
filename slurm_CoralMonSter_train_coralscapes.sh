@@ -21,7 +21,7 @@ MAX_EPOCHS=60
 BATCH_SIZE=2
 NUM_WORKERS=4
 GPU_DEVICES="0"
-LR=1e-5
+LR=1e-4
 export CUDA_VISIBLE_DEVICES="${GPU_DEVICES}"
 
 HF_TOKEN_ARG=()
@@ -125,12 +125,12 @@ fi
 #   --learning_rate "${LR}" \
 #   --prompt_bins 4
 
-echo "===> Running scenario: CoralMonSter_freeze_4points_Sharehypernet_OthoInit"
+echo "===> Running scenario: CoralMonSter_freeze_4points_OthoInit"
 python -m CoralMonSter.train \
   --dataset coralscapes \
   --dataset_root "${DATASET_ROOT}" \
   --dataset_cache_dir "${DATASET_CACHE_DIR}" \
-  --scenario_name "coralscapes_CoralMonSter_freeze_4points_Sharehypernet_OthoInit" \
+  --scenario_name "coralscapes_CoralMonSter_freeze_4points_OthoInit" \
   --scenario_preset "frozen_encoder" \
   --sam_checkpoint "${CHECKPOINT}" \
   --max_epochs "${MAX_EPOCHS}" \
