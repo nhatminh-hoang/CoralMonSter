@@ -63,7 +63,7 @@ class CoralMonSter(nn.Module):
         )
         self.distillation_enabled = False
 
-    def forward(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+    def forward(self, batch: Dict[str, Any], compute_distillation: bool = False) -> Dict[str, torch.Tensor]:
         images = batch["images"].to(self.device)
         masks = batch.get("masks")
         batch_size = images.shape[0]
@@ -89,6 +89,17 @@ class CoralMonSter(nn.Module):
 
         losses: Dict[str, torch.Tensor] = {}
         aux_losses: Dict[str, torch.Tensor] = {}
+        token_logits = student_out.get("token_logits")
+        if token_logits is not None and self.cfg.distillation.token_classification_weight > 0:
+            class_targets = torch.arange(
+                self.cfg.num_classes,
+                device=token_logits.device,
+            ).unsqueeze(0).expand(batch_size, -1).reshape(-1)
+            token_logits_flat = token_logits.reshape(batch_size * self.cfg.num_classes, self.cfg.num_classes)
+            token_cls_loss = F.cross_entropy(token_logits_flat, class_targets, label_smoothing=0.1)
+            losses["token_cls_loss"] = (
+                token_cls_loss * self.cfg.distillation.token_classification_weight
+            )
         teacher_time = 0.0
         if masks is not None:
             masks = masks.to(images.device)
@@ -99,7 +110,12 @@ class CoralMonSter(nn.Module):
                 aux_losses["dice_loss"] = dice_loss
             if ce_loss is not None:
                 aux_losses["ce_loss"] = ce_loss
-            if self.training and self.distillation_enabled and self.teacher_ready:
+            distill_active = (
+                (self.training or compute_distillation)
+                and self.distillation_enabled
+                and self.teacher_ready
+            )
+            if distill_active:
                 teacher_points, teacher_labels = self._sample_teacher_prompts(
                     batch.get("prompt_sets"), images.device
                 )
@@ -142,7 +158,8 @@ class CoralMonSter(nn.Module):
                             teacher_temp=self.teacher_temperature,
                         )
                     losses["token_kd_loss"] = token_kd * self.cfg.distillation.token_kd_weight
-                    self._update_teacher_center(teacher_tokens.detach())
+                    if self.training:
+                        self._update_teacher_center(teacher_tokens.detach())
 
         total_loss = (
             torch.stack([v for v in losses.values()]).sum() if losses else torch.tensor(0.0, device=self.device)
@@ -228,7 +245,13 @@ class CoralMonSter(nn.Module):
             masks=None,
         )
 
-        decoder_out = self.teacher_decoder(image_embeddings, image_pe, prompt_embeddings=sparse_embeddings)
+        query_embeddings = self._build_teacher_queries(image_embeddings.shape[0], sparse_embeddings)
+        decoder_out = self.teacher_decoder(
+            image_embeddings,
+            image_pe,
+            prompt_embeddings=query_embeddings,
+            prepend_class_queries=False,
+        )
         teacher_logits = decoder_out["mask_logits"]
         teacher_probs = torch.softmax(teacher_logits, dim=1)
         token_features = decoder_out["token_embeddings"].mean(dim=1)
@@ -240,6 +263,18 @@ class CoralMonSter(nn.Module):
         if return_logits:
             result["mask_logits"] = teacher_logits.detach()
         return result
+
+    def _build_teacher_queries(
+        self,
+        batch_size: int,
+        prompt_embeddings: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if self.teacher_decoder is None:
+            raise RuntimeError("Teacher decoder not initialized")
+        class_queries = self.teacher_decoder.class_tokens.unsqueeze(0).expand(batch_size, -1, -1)
+        if prompt_embeddings is None:
+            return class_queries
+        return torch.cat([prompt_embeddings, class_queries], dim=1)
 
     def _image_pe(self, batch_size: int, device: torch.device) -> torch.Tensor:
         pe = self.prompt_encoder.get_dense_pe().to(device)

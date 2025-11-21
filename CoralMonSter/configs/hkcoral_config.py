@@ -35,11 +35,12 @@ class DistillationConfig:
     between the teacher and the student mask decoders.
     """
 
-    dice_weight: float = 1.0
-    ce_weight: float = 0.1
-    mask_kd_weight: float = 1.0
+    dice_weight: float = 1.5
+    ce_weight: float = 0.0
+    mask_kd_weight: float = 0.0
     token_kd_weight: float = 1.0
     token_kd_metric: str = "ce"
+    token_classification_weight: float = 1.0
     temperature: float = 1.0
     student_temperature: float = 0.1
     teacher_temperature_start: float = 0.04

@@ -18,10 +18,10 @@ CHECKPOINT="checkpoints/vit_b_coralscop.pth"
 DATASET_ROOT="datasets/CoralScapes"
 DATASET_CACHE_DIR="${DATASET_ROOT}/cache"
 MAX_EPOCHS=60
-BATCH_SIZE=2
+BATCH_SIZE=4
 NUM_WORKERS=4
 GPU_DEVICES="0"
-LR=1e-4
+LR=1e-3
 export CUDA_VISIBLE_DEVICES="${GPU_DEVICES}"
 
 HF_TOKEN_ARG=()
@@ -125,19 +125,33 @@ fi
 #   --learning_rate "${LR}" \
 #   --prompt_bins 4
 
-echo "===> Running scenario: CoralMonSter_freeze_4points_OthoInit"
+echo "===> Running scenario: CoralMonSter_no_momentum_4points_OthoInit"
 python -m CoralMonSter.train \
   --dataset coralscapes \
   --dataset_root "${DATASET_ROOT}" \
   --dataset_cache_dir "${DATASET_CACHE_DIR}" \
-  --scenario_name "coralscapes_CoralMonSter_freeze_4points_OthoInit" \
-  --scenario_preset "frozen_encoder" \
+  --scenario_name "coralscapes_CoralMonSter_no_momentum_4points_OthoInit" \
+  --scenario_preset "no_momentum" \
   --sam_checkpoint "${CHECKPOINT}" \
   --max_epochs "${MAX_EPOCHS}" \
   --batch_size "${BATCH_SIZE}" \
   --num_workers "${NUM_WORKERS}" \
   --learning_rate "${LR}" \
   --prompt_bins 4
+
+echo "===> Running scenario: CoralMonSter_no_momentum_10points_OthoInit"
+python -m CoralMonSter.train \
+  --dataset coralscapes \
+  --dataset_root "${DATASET_ROOT}" \
+  --dataset_cache_dir "${DATASET_CACHE_DIR}" \
+  --scenario_name "coralscapes_CoralMonSter_no_momentum_10points_OthoInit" \
+  --scenario_preset "no_momentum" \
+  --sam_checkpoint "${CHECKPOINT}" \
+  --max_epochs "${MAX_EPOCHS}" \
+  --batch_size "${BATCH_SIZE}" \
+  --num_workers "${NUM_WORKERS}" \
+  --learning_rate "${LR}" \
+  --prompt_bins 10
 
 python evaluate_checkpoints.py \
   --sam_checkpoint "${CHECKPOINT}" \

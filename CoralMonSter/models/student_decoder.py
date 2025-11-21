@@ -28,7 +28,9 @@ class PromptFreeMaskDecoder(nn.Module):
         self.output_upscaling = copy.deepcopy(base_decoder.output_upscaling)
 
         proto_hyper = base_decoder.output_hypernetworks_mlps[0]
-        self.hypernet = copy.deepcopy(proto_hyper)
+        self.hypernets = nn.ModuleList(
+            [copy.deepcopy(proto_hyper) for _ in range(num_classes)]
+        )
 
         self.class_tokens = nn.Parameter(torch.randn(num_classes, self.transformer_dim))
         nn.init.orthogonal_(self.class_tokens)
@@ -42,16 +44,22 @@ class PromptFreeMaskDecoder(nn.Module):
         image_embeddings: torch.Tensor,
         image_pe: torch.Tensor,
         prompt_embeddings: Optional[torch.Tensor] = None,
+        prepend_class_queries: bool = True,
     ) -> Dict[str, torch.Tensor]:
         b, c, h, w = image_embeddings.shape
         pe = image_pe
         if pe.shape[0] == 1:
             pe = pe.expand(b, -1, -1, -1)
-        class_queries = self.class_tokens.unsqueeze(0).expand(b, -1, -1)
-        if prompt_embeddings is not None:
-            queries = torch.cat([prompt_embeddings, class_queries], dim=1)
+        if prepend_class_queries:
+            class_queries = self.class_tokens.unsqueeze(0).expand(b, -1, -1)
+            if prompt_embeddings is not None:
+                queries = torch.cat([prompt_embeddings, class_queries], dim=1)
+            else:
+                queries = class_queries
         else:
-            queries = class_queries
+            if prompt_embeddings is None:
+                raise ValueError("prompt_embeddings must include class queries when prepend_class_queries is False")
+            queries = prompt_embeddings
         hs, src = self.transformer(
             image_embedding=image_embeddings,
             image_pe=pe,
@@ -63,8 +71,10 @@ class PromptFreeMaskDecoder(nn.Module):
         upscaled_flat = upscaled.flatten(2)  # B x C' x HW
 
         token_block = hs[:, -self.num_classes :, :]
-        hyper_in = self.hypernet(token_block.reshape(b * self.num_classes, -1))
-        hyper_in = hyper_in.view(b, self.num_classes, -1)
+        hyper_in = torch.stack(
+            [hyper(token_block[:, i, :]) for i, hyper in enumerate(self.hypernets)],
+            dim=1,
+        )
         logits = torch.matmul(hyper_in, upscaled_flat).view(
             b, self.num_classes, upscaled.shape[-2], upscaled.shape[-1]
         )

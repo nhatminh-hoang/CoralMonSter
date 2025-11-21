@@ -123,11 +123,13 @@ class CoralTrainer:
                 "train_seg_loss": train_components.get("seg_loss", 0.0),
                 "train_mask_kd_loss": train_components.get("mask_kd_loss", 0.0),
                 "train_token_kd_loss": train_components.get("token_kd_loss", 0.0),
+                "train_token_cls_loss": train_components.get("token_cls_loss", 0.0),
                 "train_dice_loss": train_components.get("dice_loss", 0.0),
                 "train_ce_loss": train_components.get("ce_loss", 0.0),
                 "val_seg_loss": val_metrics["components"].get("seg_loss", 0.0),
                 "val_mask_kd_loss": val_metrics["components"].get("mask_kd_loss", 0.0),
                 "val_token_kd_loss": val_metrics["components"].get("token_kd_loss", 0.0),
+                "val_token_cls_loss": val_metrics["components"].get("token_cls_loss", 0.0),
                 "val_dice_loss": val_metrics["components"].get("dice_loss", 0.0),
                 "val_ce_loss": val_metrics["components"].get("ce_loss", 0.0),
                 "train_class_iou": train_class_iou,
@@ -241,7 +243,7 @@ class CoralTrainer:
                 meter.update(preds, masks.detach().cpu())
             train_loss = loss_sum / max(count, 1)
             loss_postfix = {"loss_total": f"{train_loss:.4f}"}
-            for key in ("seg_loss", "mask_kd_loss", "token_kd_loss", "dice_loss", "ce_loss"):
+            for key in ("seg_loss", "mask_kd_loss", "token_kd_loss", "token_cls_loss", "dice_loss", "ce_loss"):
                 if key in outputs:
                     label = key.replace("_loss", "")
                     loss_postfix[f"loss_{label}"] = f"{outputs[key].item():.4f}"
@@ -303,10 +305,11 @@ class CoralTrainer:
             visualize_dir.mkdir(parents=True, exist_ok=True)
         component_sums: Dict[str, float] = {}
         self.pca_counts[stage] = 0
+        enable_distillation = stage != "test"
         for batch in tqdm(loader):
             batch = self._to_device(batch, device)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
-                outputs = self.model.forward(batch)
+                outputs = self.model.forward(batch, compute_distillation=enable_distillation)
             self._maybe_log_pca(stage, epoch_idx, batch, outputs)
             batch_size = batch["images"].shape[0]
             loss_sum += outputs["total_loss"].item() * batch_size
@@ -344,7 +347,7 @@ class CoralTrainer:
                             title=batch["file_names"][i],
                             teacher_mask=teacher_masks[i] if teacher_masks is not None else None,
                         )
-                for key in ("seg_loss", "mask_kd_loss", "token_kd_loss", "dice_loss", "ce_loss"):
+                for key in ("seg_loss", "mask_kd_loss", "token_kd_loss", "token_cls_loss", "dice_loss", "ce_loss"):
                     if key in outputs:
                         component_sums[key] = component_sums.get(key, 0.0) + outputs[key].item() * batch_size
         return {

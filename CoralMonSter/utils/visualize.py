@@ -32,25 +32,36 @@ def save_training_curves(history: Iterable[Dict[str, float]], path: Path) -> Non
     val_mask_kd = [item.get("val_mask_kd_loss", 0.0) for item in history]
     train_token_kd = [item.get("train_token_kd_loss", 0.0) for item in history]
     val_token_kd = [item.get("val_token_kd_loss", 0.0) for item in history]
+    train_token_cls = [item.get("train_token_cls_loss", 0.0) for item in history]
+    val_token_cls = [item.get("val_token_cls_loss", 0.0) for item in history]
 
     path.parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(15, 4))
     plt.subplot(1, 3, 1)
+    def _has_signal(values: Sequence[float]) -> bool:
+        return any(abs(v) > 1e-8 for v in values)
     loss_series = [
         ("Total Loss", train_loss, val_loss, "#1f77b4"),
         ("Dice Loss", train_dice, val_dice, "#ff7f0e"),
         ("Cross-Entropy", train_ce, val_ce, "#2ca02c"),
         ("Mask KD", train_mask_kd, val_mask_kd, "#d62728"),
         ("Token KD", train_token_kd, val_token_kd, "#9467bd"),
+        ("Token CLS", train_token_cls, val_token_cls, "#8c564b"),
     ]
     for label, train_vals, val_vals, color in loss_series:
-        if train_vals is not None:
+        has_train = _has_signal(train_vals)
+        has_val = _has_signal(val_vals)
+        if not (has_train or has_val):
+            continue
+        if has_train:
             plt.plot(epochs, train_vals, linestyle="--", color=color, label=f"{label} (train)")
-        if val_vals is not None:
+        if has_val:
             plt.plot(epochs, val_vals, linestyle="-", color=color, label=f"{label} (val)")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.legend()
+    handles, labels = plt.gca().get_legend_handles_labels()
+    if handles:
+        plt.legend(handles, labels)
     plt.title("Loss Curves")
 
     plt.subplot(1, 3, 2)

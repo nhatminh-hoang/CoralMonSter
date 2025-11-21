@@ -39,8 +39,9 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
     "no_momentum": {
         "description": "Disable EMA teacher updates",
         "use_teacher_momentum": False,
-        "freeze_image_encoder": False,
+        "freeze_image_encoder": True,
         "center_momentum": 0.99,
+        "token_kd_weight": 0.0,
     },
     "momentum_no_skip": {
         "description": "Start EMA/distillation immediately (no warm-up)",
@@ -76,6 +77,9 @@ def apply_scenario_preset(cfg: HKCoralConfig, preset_name: str) -> HKCoralConfig
         cfg.optimization.momentum_skip_epochs = int(preset["momentum_skip_epochs"])
     if "token_kd_metric" in preset:
         cfg.distillation.token_kd_metric = str(preset["token_kd_metric"])
+    if "token_kd_weight" in preset:
+        cfg.distillation.token_kd_weight = float(preset["token_kd_weight"])
+        cfg.distillation.mask_kd_weight = float(preset["token_kd_weight"])
 
     return cfg
 

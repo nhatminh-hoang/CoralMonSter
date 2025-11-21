@@ -41,19 +41,59 @@ class CoralSegmentationLoss(nn.Module):
 
 
 def multi_class_dice_loss(logits: torch.Tensor, target: torch.Tensor, ignore_index: int) -> torch.Tensor:
-    probs = torch.softmax(logits, dim=1)
-    target_one_hot = torch.zeros_like(probs)
+    """
+    Computes the Dice loss for multi-class segmentation with ignore_index.
+    
+    Args:
+        logits: Predicted logits of shape (B, C, H, W).
+        target: Ground truth labels of shape (B, H, W).
+        ignore_index: Label index to ignore in the loss computation.
+    
+    Returns:
+        Dice loss averaged over classes.
+    """
+    # 1. Create a binary mask for valid pixels (B, H, W)
     mask = target != ignore_index
-    masked_target = target.clone()
-    masked_target[~mask] = 0
-    target_one_hot.scatter_(1, masked_target.unsqueeze(1), 1.0)
-    target_one_hot = target_one_hot * mask.unsqueeze(1)
+    
+    # 2. Expand mask for broadcasting to probabilities (B, 1, H, W)
+    mask_expanded = mask.unsqueeze(1)
 
-    dims = (0, 2, 3)
+    # 3. Softmax to get probabilities
+    probs = torch.softmax(logits, dim=1)
+    
+    # 4. Mask the probabilities! This is the step you were missing.
+    #    We zero out predictions at ignored locations so they don't count in the denominator.
+    probs = probs * mask_expanded
+
+    # 5. One-hot encode target (B, H, W) -> (B, C, H, W)
+    #    Note: F.one_hot expects classes at the last dim, so we permute.
+    num_classes = logits.shape[1]
+    
+    # Create a cleaned target where ignore_index is mapped to a safe index (e.g., 0)
+    # The specific value doesn't matter because we mask it out immediately after.
+    target_safe = target.clone()
+    target_safe[~mask] = 0 
+    
+    target_one_hot = F.one_hot(target_safe, num_classes=num_classes).permute(0, 3, 1, 2).float()
+    
+    # 6. Mask the target one-hot
+    target_one_hot = target_one_hot * mask_expanded
+
+    # 7. Compute Dice
+    #    Sum over Batch, H, W (Global Batch Dice). 
+    #    Standard practice usually sums over (H, W) then averages over Batch, 
+    #    but your implementation used (0, 2, 3) which is valid for Batch Dice.
+    dims = (0, 2, 3) 
+    
     numerator = 2 * torch.sum(probs * target_one_hot, dims)
+    
+    # The denominator now correctly excludes probability mass from ignored pixels
     denominator = torch.sum(probs + target_one_hot, dims).clamp_min(1e-6)
-    loss = 1 - numerator / denominator
-    return loss.mean()
+    
+    dice_score = numerator / denominator
+    loss = 1 - dice_score.mean()
+    
+    return loss
 
 
 def mask_distillation_loss(student: torch.Tensor, teacher: torch.Tensor) -> torch.Tensor:
