@@ -41,7 +41,6 @@ class DistillationConfig:
     token_kd_weight: float = 1.0
     token_kd_metric: str = "ce"
     token_classification_weight: float = 1.0
-    temperature: float = 1.0
     student_temperature: float = 0.1
     teacher_temperature_start: float = 0.04
     teacher_temperature_end: float = 0.07
