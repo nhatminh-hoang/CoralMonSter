@@ -23,6 +23,7 @@ class TwoWayTransformer(nn.Module):
         mlp_dim: int,
         activation: Type[nn.Module] = nn.ReLU,
         attention_downsample_rate: int = 2,
+        use_flash_attention: bool = False,
     ) -> None:
         """
         A transformer decoder that attends to an input image using
@@ -35,6 +36,7 @@ class TwoWayTransformer(nn.Module):
             divide embedding_dim
           mlp_dim (int): the channel dimension internal to the MLP block
           activation (nn.Module): the activation to use in the MLP block
+          use_flash_attention (bool): whether to use flash attention
         """
         super().__init__()
         self.depth = depth
@@ -52,11 +54,12 @@ class TwoWayTransformer(nn.Module):
                     activation=activation,
                     attention_downsample_rate=attention_downsample_rate,
                     skip_first_layer_pe=(i == 0),
+                    use_flash_attention=use_flash_attention,
                 )
             )
 
         self.final_attn_token_to_image = Attention(
-            embedding_dim, num_heads, downsample_rate=attention_downsample_rate
+            embedding_dim, num_heads, downsample_rate=attention_downsample_rate, use_flash_attention=use_flash_attention
         )
         self.norm_final_attn = nn.LayerNorm(embedding_dim)
 
@@ -116,6 +119,7 @@ class TwoWayAttentionBlock(nn.Module):
         activation: Type[nn.Module] = nn.ReLU,
         attention_downsample_rate: int = 2,
         skip_first_layer_pe: bool = False,
+        use_flash_attention: bool = False,
     ) -> None:
         """
         A transformer block with four layers: (1) self-attention of sparse
@@ -129,13 +133,14 @@ class TwoWayAttentionBlock(nn.Module):
           mlp_dim (int): the hidden dimension of the mlp block
           activation (nn.Module): the activation of the mlp block
           skip_first_layer_pe (bool): skip the PE on the first layer
+          use_flash_attention (bool): whether to use flash attention
         """
         super().__init__()
-        self.self_attn = Attention(embedding_dim, num_heads)
+        self.self_attn = Attention(embedding_dim, num_heads, use_flash_attention=use_flash_attention)
         self.norm1 = nn.LayerNorm(embedding_dim)
 
         self.cross_attn_token_to_image = Attention(
-            embedding_dim, num_heads, downsample_rate=attention_downsample_rate
+            embedding_dim, num_heads, downsample_rate=attention_downsample_rate, use_flash_attention=use_flash_attention
         )
         self.norm2 = nn.LayerNorm(embedding_dim)
 
@@ -144,7 +149,7 @@ class TwoWayAttentionBlock(nn.Module):
 
         self.norm4 = nn.LayerNorm(embedding_dim)
         self.cross_attn_image_to_token = Attention(
-            embedding_dim, num_heads, downsample_rate=attention_downsample_rate
+            embedding_dim, num_heads, downsample_rate=attention_downsample_rate, use_flash_attention=use_flash_attention
         )
 
         self.skip_first_layer_pe = skip_first_layer_pe
@@ -194,11 +199,13 @@ class Attention(nn.Module):
         embedding_dim: int,
         num_heads: int,
         downsample_rate: int = 1,
+        use_flash_attention: bool = False,
     ) -> None:
         super().__init__()
         self.embedding_dim = embedding_dim
         self.internal_dim = embedding_dim // downsample_rate
         self.num_heads = num_heads
+        self.use_flash_attention = use_flash_attention
         assert self.internal_dim % num_heads == 0, "num_heads must divide embedding_dim."
 
         self.q_proj = nn.Linear(embedding_dim, self.internal_dim)
@@ -227,18 +234,26 @@ class Attention(nn.Module):
         k = self._separate_heads(k, self.num_heads)
         v = self._separate_heads(v, self.num_heads)
 
-        # Attention
-        # _, _, _, c_per_head = q.shape
-        # attn = q @ k.permute(0, 1, 3, 2)  # B x N_heads x N_tokens x N_tokens
-        # attn = attn / math.sqrt(c_per_head)
-        # attn = torch.softmax(attn, dim=-1)
-
-        # # Get output
-        # out = attn @ v
-
-        # Using flash attention
-        out = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
+        if self.use_flash_attention:
+            out = self._flash_attention_forward(q, k, v)
+        else:
+            out = self._standard_attention_forward(q, k, v)
+        
         out = self._recombine_heads(out)
         out = self.out_proj(out)
 
+        return out
+
+    def _flash_attention_forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+        return F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
+
+    def _standard_attention_forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+        # Attention
+        _, _, _, c_per_head = q.shape
+        attn = q @ k.permute(0, 1, 3, 2)  # B x N_heads x N_tokens x N_tokens
+        attn = attn / math.sqrt(c_per_head)
+        attn = torch.softmax(attn, dim=-1)
+
+        # Get output
+        out = attn @ v
         return out
