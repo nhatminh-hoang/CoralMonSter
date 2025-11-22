@@ -57,6 +57,13 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
         "use_teacher_momentum": True,
         "center_momentum": 0.99,
     },
+    "lora_encoder": {
+        "description": "LoRA fine-tuning of image encoder",
+        "freeze_image_encoder": False,
+        "use_lora": True,
+        "use_teacher_momentum": True,
+        "center_momentum": 0.99,
+    },
 }
 
 
@@ -80,6 +87,8 @@ def apply_scenario_preset(cfg: HKCoralConfig, preset_name: str) -> HKCoralConfig
     if "token_kd_weight" in preset:
         cfg.distillation.token_kd_weight = float(preset["token_kd_weight"])
         cfg.distillation.mask_kd_weight = float(preset["token_kd_weight"])
+    if "use_lora" in preset:
+        cfg.use_lora = bool(preset["use_lora"])
 
     return cfg
 

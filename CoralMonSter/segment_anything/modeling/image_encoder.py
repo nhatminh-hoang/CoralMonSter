@@ -7,10 +7,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as checkpoint
 
 from typing import Optional, Tuple, Type
 
 from .common import LayerNorm2d, MLPBlock
+
+# Flash Attention support (optional)
+try:
+    from flash_attn import flash_attn_func
+    FLASH_ATTN_AVAILABLE = True
+except ImportError:
+    FLASH_ATTN_AVAILABLE = False
 
 
 # This class and its supporting functions below lightly adapted from the ViTDet backbone available at: https://github.com/facebookresearch/detectron2/blob/main/detectron2/modeling/backbone/vit.py # noqa
@@ -33,6 +41,8 @@ class ImageEncoderViT(nn.Module):
         rel_pos_zero_init: bool = True,
         window_size: int = 0,
         global_attn_indexes: Tuple[int, ...] = (),
+        use_gradient_checkpointing: bool = False,
+        use_flash_attention: bool = False,
     ) -> None:
         """
         Args:
@@ -51,9 +61,12 @@ class ImageEncoderViT(nn.Module):
             rel_pos_zero_init (bool): If True, zero initialize relative positional parameters.
             window_size (int): Window size for window attention blocks.
             global_attn_indexes (list): Indexes for blocks using global attention.
+            use_gradient_checkpointing (bool): If True, use gradient checkpointing to reduce memory.
+            use_flash_attention (bool): If True, use Flash Attention for memory efficiency.
         """
         super().__init__()
         self.img_size = img_size
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
         self.patch_embed = PatchEmbed(
             kernel_size=(patch_size, patch_size),
@@ -82,6 +95,7 @@ class ImageEncoderViT(nn.Module):
                 rel_pos_zero_init=rel_pos_zero_init,
                 window_size=window_size if i not in global_attn_indexes else 0,
                 input_size=(img_size // patch_size, img_size // patch_size),
+                use_flash_attention=use_flash_attention,
             )
             self.blocks.append(block)
 
@@ -109,7 +123,10 @@ class ImageEncoderViT(nn.Module):
             x = x + self.pos_embed
 
         for blk in self.blocks:
-            x = blk(x)
+            if self.use_gradient_checkpointing and self.training:
+                x = checkpoint.checkpoint(blk, x, use_reentrant=False)
+            else:
+                x = blk(x)
 
         x = self.neck(x.permute(0, 3, 1, 2))
 
@@ -131,6 +148,7 @@ class Block(nn.Module):
         rel_pos_zero_init: bool = True,
         window_size: int = 0,
         input_size: Optional[Tuple[int, int]] = None,
+        use_flash_attention: bool = False,
     ) -> None:
         """
         Args:
@@ -146,6 +164,7 @@ class Block(nn.Module):
                 use global attention.
             input_size (tuple(int, int) or None): Input resolution for calculating the relative
                 positional parameter size.
+            use_flash_attention (bool): If True, use Flash Attention for memory efficiency.
         """
         super().__init__()
         self.norm1 = norm_layer(dim)
@@ -156,6 +175,7 @@ class Block(nn.Module):
             use_rel_pos=use_rel_pos,
             rel_pos_zero_init=rel_pos_zero_init,
             input_size=input_size if window_size == 0 else (window_size, window_size),
+            use_flash_attention=use_flash_attention,
         )
 
         self.norm2 = norm_layer(dim)
@@ -193,6 +213,7 @@ class Attention(nn.Module):
         use_rel_pos: bool = False,
         rel_pos_zero_init: bool = True,
         input_size: Optional[Tuple[int, int]] = None,
+        use_flash_attention: bool = False,
     ) -> None:
         """
         Args:
@@ -203,9 +224,13 @@ class Attention(nn.Module):
             rel_pos_zero_init (bool): If True, zero initialize relative positional parameters.
             input_size (tuple(int, int) or None): Input resolution for calculating the relative
                 positional parameter size.
+            use_flash_attention (bool): If True, use Flash Attention for memory efficiency.
         """
         super().__init__()
         self.num_heads = num_heads
+        # Flash Attention support
+        self.use_flash_attention = use_flash_attention
+        
         head_dim = dim // num_heads
         self.scale = head_dim**-0.5
 
@@ -222,6 +247,60 @@ class Attention(nn.Module):
             self.rel_pos_w = nn.Parameter(torch.zeros(2 * input_size[1] - 1, head_dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_flash_attention:
+            return self._flash_attention_forward(x)
+        else:
+            return self._standard_attention_forward(x)
+    
+    def _flash_attention_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Flash Attention forward pass using PyTorch SDPA."""
+        B, H, W, C = x.shape
+        
+        # QKV projection: [B, H*W, 3, num_heads, head_dim]
+        qkv = self.qkv(x).reshape(B, H * W, 3, self.num_heads, C // self.num_heads)
+        q, k, v = qkv.unbind(2)  # Each: [B, seq_len, num_heads, head_dim]
+        
+        # Transpose for SDPA: [B, num_heads, seq_len, head_dim]
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        
+        attn_mask = None
+        if self.use_rel_pos:
+            # Calculate relative positional bias
+            # q shape for rel_pos calculation: [B, H*W, C]
+            # We need to reshape q back to [B, H, W, C] for get_rel_pos_bias helper or adjust helper
+            # Let's use the helper with original q shape logic
+            # q_original shape: [B, H*W, C] (before reshape)
+            # Actually, get_rel_pos_bias needs q with shape [B, H, W, C] to extract dimensions easily
+            # But here q is already reshaped.
+            # Let's compute bias.
+            
+            # Reconstruct q for rel_pos calculation: [B, H, W, C]
+            q_for_rel = q.transpose(1, 2).reshape(B, H, W, C)
+            
+            # Bias shape: [B, num_heads, H*W, H*W]
+            attn_mask = get_rel_pos_bias(
+                q_for_rel, 
+                self.rel_pos_h, 
+                self.rel_pos_w, 
+                (H, W), 
+                (H, W),
+                self.num_heads
+            )
+            
+        # SDPA
+        # attn_mask shape: [B, num_heads, L, S]
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        
+        # Reshape back: [B, num_heads, seq_len, head_dim] -> [B, seq_len, num_heads, head_dim]
+        out = out.transpose(1, 2).reshape(B, H, W, C)
+        out = self.proj(out)
+        
+        return out
+    
+    def _standard_attention_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Standard attention forward pass (original SAM implementation)."""
         B, H, W, _ = x.shape
         # qkv with shape (3, B, nHead, H * W, C)
         qkv = self.qkv(x).reshape(B, H * W, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
@@ -359,6 +438,77 @@ def add_decomposed_rel_pos(
     ).view(B, q_h * q_w, k_h * k_w)
 
     return attn
+
+
+def get_rel_pos_bias(
+    q: torch.Tensor,
+    rel_pos_h: torch.Tensor,
+    rel_pos_w: torch.Tensor,
+    q_size: Tuple[int, int],
+    k_size: Tuple[int, int],
+    num_heads: int,
+) -> torch.Tensor:
+    """
+    Calculate decomposed Relative Positional Embeddings bias.
+    Args:
+        q (Tensor): query q with shape (B, q_h, q_w, C).
+        rel_pos_h (Tensor): relative position embeddings (Lh, C) for height axis.
+        rel_pos_w (Tensor): relative position embeddings (Lw, C) for width axis.
+        q_size (Tuple): spatial sequence size of query q with (q_h, q_w).
+        k_size (Tuple): spatial sequence size of key k with (k_h, k_w).
+        num_heads (int): number of attention heads.
+
+    Returns:
+        bias (Tensor): relative positional bias with shape (B, num_heads, q_h*q_w, k_h*k_w).
+    """
+    q_h, q_w = q_size
+    k_h, k_w = k_size
+    Rh = get_rel_pos(q_h, k_h, rel_pos_h)
+    Rw = get_rel_pos(q_w, k_w, rel_pos_w)
+
+    B, _, _, dim = q.shape
+    r_q = q.reshape(B, q_h, q_w, dim)
+    
+    # r_q: [B, q_h, q_w, C]
+    # Rh: [2*q_h-1, head_dim] -> [k_h, head_dim] (interpolated)
+    # We need to project r_q to head_dim first?
+    # In add_decomposed_rel_pos:
+    # q is (B, q_h*q_w, C).
+    # rel_h = torch.einsum("bhwc,hkc->bhwk", r_q, Rh)
+    # C here is full dim (embed_dim). Rh has shape (L, head_dim).
+    # This einsum implies r_q last dim C should be compatible with Rh last dim C.
+    # But Rh last dim is head_dim.
+    # Wait, in Attention.__init__:
+    # self.rel_pos_h = nn.Parameter(torch.zeros(2 * input_size[0] - 1, head_dim))
+    # So Rh has head_dim.
+    # But q has embed_dim = num_heads * head_dim.
+    # The einsum "bhwc,hkc->bhwk" works if c matches.
+    # This means r_q MUST be reshaped to (B, q_h, q_w, num_heads, head_dim) before einsum?
+    # Let's check add_decomposed_rel_pos again.
+    # q in add_decomposed_rel_pos comes from Attention.forward:
+    # q, k, v = qkv.reshape(3, B * self.num_heads, H * W, -1).unbind(0)
+    # So q has shape (B * num_heads, L, head_dim).
+    # Then in add_decomposed_rel_pos:
+    # B, _, dim = q.shape -> B is actually Batch*NumHeads. dim is head_dim.
+    
+    # So in get_rel_pos_bias, we should expect q to be (B, num_heads, q_h, q_w, head_dim)
+    # or handle the reshaping inside.
+    
+    # Let's reshape q to (B * num_heads, q_h, q_w, head_dim)
+    head_dim = dim // num_heads
+    r_q = q.reshape(B, q_h, q_w, num_heads, head_dim).permute(0, 3, 1, 2, 4).reshape(B * num_heads, q_h, q_w, head_dim)
+    
+    rel_h = torch.einsum("bhwc,hkc->bhwk", r_q, Rh)
+    rel_w = torch.einsum("bhwc,wkc->bhwk", r_q, Rw)
+
+    bias = (
+        rel_h[:, :, :, :, None] + rel_w[:, :, :, None, :]
+    ).reshape(B * num_heads, q_h * q_w, k_h * k_w)
+    
+    # Reshape to (B, num_heads, L, S) for SDPA
+    bias = bias.view(B, num_heads, q_h * q_w, k_h * k_w)
+    
+    return bias
 
 
 class PatchEmbed(nn.Module):

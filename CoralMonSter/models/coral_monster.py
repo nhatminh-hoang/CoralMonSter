@@ -14,14 +14,9 @@ import torch.nn.functional as F
 from torch import nn
 
 from CoralMonSter.configs.hkcoral_config import HKCoralConfig
-from CoralMonSter.losses import (
-    CoralSegmentationLoss,
-    mask_distillation_loss,
-    token_cross_entropy,
-    token_kl_divergence,
-)
 from CoralMonSter.models.student_decoder import PromptFreeMaskDecoder
-from CoralMonSter.segment_anything import sam_model_registry
+from CoralMonSter.models.backbones import build_sam_backbone
+from peft import LoraConfig, get_peft_model
 
 
 class CoralMonSter(nn.Module):
@@ -32,7 +27,12 @@ class CoralMonSter(nn.Module):
     def __init__(self, cfg: HKCoralConfig) -> None:
         super().__init__()
         self.cfg = cfg.resolve_paths()
-        sam = self._build_sam_backbone()
+        sam = build_sam_backbone(
+            self.cfg.model_type,
+            self.cfg.sam_checkpoint,
+            use_gradient_checkpointing=self.cfg.use_gradient_checkpointing,
+            use_flash_attention=self.cfg.use_flash_attention,
+        )
 
         self.image_encoder = sam.image_encoder
         self.prompt_encoder = sam.prompt_encoder
@@ -41,7 +41,19 @@ class CoralMonSter(nn.Module):
         self.teacher_ready = False
         self.momentum = self.cfg.optimization.ema_momentum_min
 
-        if self.cfg.freeze_image_encoder:
+        if self.cfg.use_lora:
+            print(f"Enabling LoRA for image encoder with r={self.cfg.lora_r}, alpha={self.cfg.lora_alpha}, dropout={self.cfg.lora_dropout}, target={self.cfg.lora_target_modules}")
+            lora_config = LoraConfig(
+                r=self.cfg.lora_r,
+                lora_alpha=self.cfg.lora_alpha,
+                target_modules=self.cfg.lora_target_modules,
+                lora_dropout=self.cfg.lora_dropout,
+                bias="none",
+                modules_to_save=[],
+            )
+            self.image_encoder = get_peft_model(self.image_encoder, lora_config)
+            self.image_encoder.print_trainable_parameters()
+        elif self.cfg.freeze_image_encoder:
             for p in self.image_encoder.parameters():
                 p.requires_grad_(False)
         if self.cfg.freeze_prompt_encoder:
@@ -49,14 +61,8 @@ class CoralMonSter(nn.Module):
                 p.requires_grad_(False)
             self.prompt_encoder.eval()
 
-        self.seg_loss = CoralSegmentationLoss(
-            dice_weight=self.cfg.distillation.dice_weight,
-            ce_weight=self.cfg.distillation.ce_weight,
-            ignore_index=self.cfg.ignore_label,
-        )
         self.student_token_proj = nn.Linear(self.student_decoder.transformer_dim, 256)
         self.teacher_token_proj = nn.Identity()
-        self.teacher_temperature = self.cfg.distillation.teacher_temperature_start
         self.register_buffer(
             "teacher_center",
             torch.zeros(self.student_decoder.transformer_dim, dtype=torch.float32),
@@ -85,96 +91,50 @@ class CoralMonSter(nn.Module):
             mode="bilinear",
             align_corners=False,
         )
-        student_probs = torch.softmax(logits, dim=1)
-
-        losses: Dict[str, torch.Tensor] = {}
-        aux_losses: Dict[str, torch.Tensor] = {}
-        token_logits = student_out.get("token_logits")
-        if token_logits is not None and self.cfg.distillation.token_classification_weight > 0:
-            class_targets = torch.arange(
-                self.cfg.num_classes,
-                device=token_logits.device,
-            ).unsqueeze(0).expand(batch_size, -1).reshape(-1)
-            token_logits_flat = token_logits.reshape(batch_size * self.cfg.num_classes, self.cfg.num_classes)
-            token_cls_loss = F.cross_entropy(token_logits_flat, class_targets, label_smoothing=0.1)
-            losses["token_cls_loss"] = (
-                token_cls_loss * self.cfg.distillation.token_classification_weight
-            )
-        teacher_time = 0.0
-        if masks is not None:
-            masks = masks.to(images.device)
-            losses["seg_loss"] = self.seg_loss(logits, masks)
-            dice_loss = getattr(self.seg_loss, "last_dice_loss", None)
-            ce_loss = getattr(self.seg_loss, "last_ce_loss", None)
-            if dice_loss is not None:
-                aux_losses["dice_loss"] = dice_loss
-            if ce_loss is not None:
-                aux_losses["ce_loss"] = ce_loss
-            distill_active = (
-                (self.training or compute_distillation)
-                and self.distillation_enabled
-                and self.teacher_ready
-            )
-            if distill_active:
-                teacher_points, teacher_labels = self._sample_teacher_prompts(
-                    batch.get("prompt_sets"), images.device
-                )
-                if teacher_points is not None:
-                    teacher_start = time.time()
-                    teacher_out = self._teacher_forward(
-                        image_embeddings,
-                        image_pe,
-                        teacher_points,
-                        teacher_labels,
-                        batch.get("boxes"),
-                        return_logits=True,
-                    )
-                    teacher_time = time.time() - teacher_start
-                    teacher_logits = teacher_out.get("mask_logits")
-                    if teacher_logits is not None:
-                        teacher_probs = torch.softmax(teacher_logits, dim=1).detach()
-                        mask_kd = mask_distillation_loss(student_probs, teacher_probs)
-                        losses["mask_kd_loss"] = mask_kd * self.cfg.distillation.mask_kd_weight
-
-                    student_tokens = self.student_token_proj(student_out["token_embeddings"]).mean(dim=1)
-                    teacher_tokens = self.teacher_token_proj(teacher_out["token_features"])
-                    if self.cfg.distillation.center_momentum > 0:
-                        centered_teacher = teacher_tokens - self.teacher_center
-                    else:
-                        centered_teacher = teacher_tokens
-                    metric = getattr(self.cfg.distillation, "token_kd_metric", "ce").lower()
-                    if metric == "kl":
-                        token_kd = token_kl_divergence(
-                            student_tokens,
-                            centered_teacher,
-                            student_temp=self.cfg.distillation.student_temperature,
-                            teacher_temp=self.teacher_temperature,
-                        )
-                    else:
-                        token_kd = token_cross_entropy(
-                            student_tokens,
-                            centered_teacher,
-                            student_temp=self.cfg.distillation.student_temperature,
-                            teacher_temp=self.teacher_temperature,
-                        )
-                    losses["token_kd_loss"] = token_kd * self.cfg.distillation.token_kd_weight
-                    if self.training:
-                        self._update_teacher_center(teacher_tokens.detach())
-
-        total_loss = (
-            torch.stack([v for v in losses.values()]).sum() if losses else torch.tensor(0.0, device=self.device)
-        )
+        
         outputs = {
-            "logits": logits,
-            "total_loss": total_loss,
+            "student_logits": logits,
+            "student_token_logits": student_out.get("token_logits"),
             "encoder_time": encoder_time,
             "student_time": student_time,
-            "teacher_time": teacher_time,
+            "teacher_time": 0.0,
         }
         if encoder_snapshot is not None:
             outputs["encoder_embeddings"] = encoder_snapshot
-        outputs.update(losses)
-        outputs.update(aux_losses)
+
+        distill_active = (
+            (self.training or compute_distillation)
+            and self.distillation_enabled
+            and self.teacher_ready
+        )
+        
+        if distill_active:
+            teacher_points, teacher_labels = self._sample_teacher_prompts(
+                batch.get("prompt_sets"), images.device
+            )
+            if teacher_points is not None:
+                teacher_start = time.time()
+                teacher_out = self._teacher_forward(
+                    image_embeddings,
+                    image_pe,
+                    teacher_points,
+                    teacher_labels,
+                    batch.get("boxes"),
+                    return_logits=True,
+                )
+                outputs["teacher_time"] = time.time() - teacher_start
+                outputs["teacher_logits"] = teacher_out.get("mask_logits")
+                
+                student_tokens = self.student_token_proj(student_out["token_embeddings"]).mean(dim=1)
+                teacher_tokens = self.teacher_token_proj(teacher_out["token_features"])
+                
+                outputs["student_tokens"] = student_tokens
+                outputs["teacher_tokens"] = teacher_tokens
+                outputs["teacher_center"] = self.teacher_center.clone()
+
+                if self.training:
+                    self._update_teacher_center(teacher_tokens.detach())
+
         return outputs
 
     @torch.no_grad()
@@ -343,9 +303,6 @@ class CoralMonSter(nn.Module):
     def set_momentum(self, momentum: float) -> None:
         self.momentum = float(momentum)
 
-    def set_teacher_temperature(self, value: float) -> None:
-        self.teacher_temperature = float(value)
-
     def set_distillation_enabled(self, enabled: bool) -> None:
         self.distillation_enabled = bool(enabled)
         if self.distillation_enabled and not self.teacher_ready:
@@ -365,21 +322,3 @@ class CoralMonSter(nn.Module):
         center_m = self.cfg.distillation.center_momentum
         batch_center = teacher_tokens.mean(dim=0)
         self.teacher_center.mul_(center_m).add_(batch_center, alpha=1 - center_m)
-
-    def _build_sam_backbone(self):
-        checkpoint_path = self.cfg.sam_checkpoint
-        if checkpoint_path.exists():
-            checkpoint_arg = str(checkpoint_path)
-        else:
-            print(f"[Warning] SAM checkpoint '{checkpoint_path}' not found. Initializing from scratch.")
-            checkpoint_arg = None
-        try:
-            return sam_model_registry[self.cfg.model_type](checkpoint=checkpoint_arg)
-        except RuntimeError as exc:
-            if checkpoint_arg and "state_dict" in str(exc):
-                print(
-                    "[Warning] Failed to load checkpoint into SAM backbone due to mismatched keys. "
-                    "Falling back to random initialization. Make sure '--model_type' matches the checkpoint."
-                )
-                return sam_model_registry[self.cfg.model_type](checkpoint=None)
-            raise

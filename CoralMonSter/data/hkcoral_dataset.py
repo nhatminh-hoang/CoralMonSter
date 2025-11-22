@@ -108,8 +108,11 @@ class HKCoralDataset(Dataset):
         timings["image_transform"] = time.perf_counter() - start
 
         start = time.perf_counter()
-        prompt = sample_prompt(mask, self.prompt_points, self.num_classes, self.ignore_label)
-        prompt_sets = build_prompt_sets(mask, self.prompt_bins, self.num_classes, self.ignore_label)
+        start = time.perf_counter()
+        class_indices = get_class_coordinates(mask, self.ignore_label)
+        prompt = sample_prompt(class_indices, self.prompt_points, self.num_classes, mask.shape)
+        prompt_sets = build_prompt_sets(class_indices, self.prompt_bins, self.num_classes, mask.shape)
+        timings["prompt_sampling"] = time.perf_counter() - start
         timings["prompt_sampling"] = time.perf_counter() - start
         timings["total"] = sum(timings.values())
 
@@ -126,39 +129,79 @@ class HKCoralDataset(Dataset):
         }
 
 
-def sample_prompt(mask: torch.Tensor, points_per_label: int, num_classes: int, ignore_label: int) -> PromptSample:
+def get_class_coordinates(mask: torch.Tensor, ignore_label: int) -> Dict[int, torch.Tensor]:
+    """
+    Pre-compute flat indices for each class in the mask.
+    Returns a dictionary mapping class_id to a tensor of flat indices.
+    """
+    flat_mask = mask.flatten()
+    valid_mask = flat_mask != ignore_label
+    valid_indices = torch.nonzero(valid_mask, as_tuple=True)[0]
+    
+    if valid_indices.numel() == 0:
+        return {}
+        
+    valid_labels = flat_mask[valid_indices]
+    
+    # Sort by label to group indices
+    sorted_labels, sort_idx = torch.sort(valid_labels)
+    sorted_indices = valid_indices[sort_idx]
+    
+    unique_labels, counts = torch.unique_consecutive(sorted_labels, return_counts=True)
+    
+    class_indices = {}
+    start_idx = 0
+    for i, label in enumerate(unique_labels):
+        count = counts[i].item()
+        class_indices[label.item()] = sorted_indices[start_idx : start_idx + count]
+        start_idx += count
+        
+    return class_indices
+
+
+def sample_prompt(
+    class_indices: Dict[int, torch.Tensor], 
+    points_per_label: int, 
+    num_classes: int,
+    shape: Tuple[int, int]
+) -> PromptSample:
     """
     Sample an equal number of points per semantic label (including background).
     """
-
+    H, W = shape
     coords_all = []
     labels_all = []
 
-    def _sample_coords(coords: torch.Tensor, count: int) -> torch.Tensor:
-        if coords.numel() == 0 or count == 0:
-            return torch.zeros((0, 2), dtype=torch.float32)
-        if coords.shape[0] <= count:
-            choice = coords
+    def _sample_indices(indices: torch.Tensor, count: int) -> torch.Tensor:
+        if indices.numel() == 0 or count == 0:
+            return torch.zeros(0, dtype=torch.long)
+        if indices.shape[0] <= count:
+            choice = indices
         else:
-            idx = torch.randperm(coords.shape[0])[:count]
-            choice = coords[idx]
-        return choice[:, [1, 0]].float()  # switch to (x, y)
+            idx = torch.randperm(indices.shape[0])[:count]
+            choice = indices[idx]
+        return choice
 
-    valid_mask = mask != ignore_label
     # Foreground classes
     for cls_id in range(1, num_classes):
-        cls_coords = torch.nonzero((mask == cls_id) & valid_mask, as_tuple=False)
-        sampled = _sample_coords(cls_coords, points_per_label)
-        if sampled.numel():
-            coords_all.append(sampled)
-            labels_all.append(torch.ones(sampled.shape[0], dtype=torch.long))
+        if cls_id in class_indices:
+            sampled_idx = _sample_indices(class_indices[cls_id], points_per_label)
+            if sampled_idx.numel():
+                y = torch.div(sampled_idx, W, rounding_mode='floor')
+                x = sampled_idx % W
+                coords = torch.stack([x, y], dim=1).float()
+                coords_all.append(coords)
+                labels_all.append(torch.ones(coords.shape[0], dtype=torch.long))
 
-    # Background as negatives
-    background_coords = torch.nonzero((mask == 0) & valid_mask, as_tuple=False)
-    sampled_bg = _sample_coords(background_coords, points_per_label)
-    if sampled_bg.numel():
-        coords_all.append(sampled_bg)
-        labels_all.append(torch.zeros(sampled_bg.shape[0], dtype=torch.long))
+    # Background as negatives (class 0)
+    if 0 in class_indices:
+        sampled_idx_bg = _sample_indices(class_indices[0], points_per_label)
+        if sampled_idx_bg.numel():
+            y = torch.div(sampled_idx_bg, W, rounding_mode='floor')
+            x = sampled_idx_bg % W
+            coords = torch.stack([x, y], dim=1).float()
+            coords_all.append(coords)
+            labels_all.append(torch.zeros(coords.shape[0], dtype=torch.long))
 
     if coords_all:
         coords = torch.cat(coords_all, dim=0)
@@ -167,21 +210,32 @@ def sample_prompt(mask: torch.Tensor, points_per_label: int, num_classes: int, i
         coords = torch.zeros((0, 2), dtype=torch.float32)
         labels = torch.zeros(0, dtype=torch.long)
 
-    positives = torch.nonzero((mask > 0) & valid_mask, as_tuple=False)
-    box = _mask_to_box(positives)
+    # Calculate box from all positive points (foreground)
+    pos_indices_list = [class_indices[c] for c in class_indices if c > 0]
+    if pos_indices_list:
+        all_pos_indices = torch.cat(pos_indices_list, dim=0)
+        y = torch.div(all_pos_indices, W, rounding_mode='floor')
+        x = all_pos_indices % W
+        # _mask_to_box expects (y, x) if we follow previous logic, but let's check implementation
+        # Previous implementation was: box = _mask_to_box(all_positives) where all_positives was (N, 2) [y, x] from nonzero
+        # So we should pass stack([y, x])
+        all_pos_coords = torch.stack([y, x], dim=1)
+        box = _mask_to_box(all_pos_coords)
+    else:
+        box = None
 
     return PromptSample(coords=coords, labels=labels, box=box)
 
 
 def build_prompt_sets(
-    mask: torch.Tensor,
+    class_indices: Dict[int, torch.Tensor],
     counts: Tuple[int, ...],
     num_classes: int,
-    ignore_label: int,
+    shape: Tuple[int, int]
 ) -> Dict[int, PromptSample]:
     prompt_sets = {}
     for count in counts:
-        prompt_sets[count] = sample_prompt(mask, count, num_classes, ignore_label)
+        prompt_sets[count] = sample_prompt(class_indices, count, num_classes, shape)
     return prompt_sets
 
 

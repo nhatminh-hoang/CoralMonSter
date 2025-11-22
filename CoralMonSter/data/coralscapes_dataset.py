@@ -15,7 +15,7 @@ from torch.utils.data import Dataset
 from torchvision.transforms import v2 as T
 from torchvision.transforms import functional as F
 
-from .hkcoral_dataset import PromptSample, build_prompt_sets, sample_prompt
+from .hkcoral_dataset import PromptSample, build_prompt_sets, sample_prompt, get_class_coordinates
 
 
 @dataclass
@@ -97,8 +97,10 @@ class CoralScapesDataset(Dataset):
         timings["image_transform"] = time.perf_counter() - start
 
         start = time.perf_counter()
-        prompt = sample_prompt(mask, self.prompt_points, self.num_classes, self.ignore_label)
-        prompt_sets = build_prompt_sets(mask, self.prompt_bins, self.num_classes, self.ignore_label)
+        start = time.perf_counter()
+        class_indices = get_class_coordinates(mask, self.ignore_label)
+        prompt = sample_prompt(class_indices, self.prompt_points, self.num_classes, mask.shape)
+        prompt_sets = build_prompt_sets(class_indices, self.prompt_bins, self.num_classes, mask.shape)
         timings["prompt_sampling"] = time.perf_counter() - start
         timings["total"] = sum(timings.values())
 

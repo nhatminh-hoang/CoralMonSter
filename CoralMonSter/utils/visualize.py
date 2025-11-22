@@ -198,3 +198,50 @@ def _colorize_mask(mask: np.ndarray, palette: Sequence[Tuple[int, int, int]]) ->
     for idx, rgb in enumerate(palette):
         color[mask == idx] = rgb
     return color
+
+
+def save_confusion_figure(confusion: Sequence[Sequence[float]], class_names: Sequence[str], path: Path) -> None:
+    matrix = np.array(confusion)
+    if matrix.size == 0:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row_sums = matrix.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    norm_matrix = matrix / row_sums
+
+    # Scale the canvas to keep dense label sets (e.g., 40 CoralScapes classes) readable.
+    num_classes = len(class_names)
+    fig_width = 20
+    fig_height = 20
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    im = ax.imshow(norm_matrix, interpolation="nearest", cmap="viridis", vmin=0.0, vmax=1.0)
+    ax.set_title("Normalized Confusion Matrix")
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.ax.tick_params(labelsize=8)
+
+    ticks = np.arange(num_classes)
+    font_size = 8 if num_classes > 20 else 10
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(class_names, rotation=55, ha="right", fontsize=font_size)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(class_names, fontsize=font_size)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Ground Truth")
+
+    for i in range(norm_matrix.shape[0]):
+        for j in range(norm_matrix.shape[1]):
+            value = norm_matrix[i, j]
+            ax.text(
+                j,
+                i,
+                f"{value:.2f}",
+                ha="center",
+                va="center",
+                color="white" if value > 0.5 else "black",
+                fontsize=font_size,
+            )
+
+    # Reserve extra padding for long rotated labels.
+    fig.subplots_adjust(left=0.32, bottom=0.35, right=0.98, top=0.92)
+    fig.savefig(path, dpi=300)
+    plt.close(fig)

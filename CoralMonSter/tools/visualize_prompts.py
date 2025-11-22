@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Visualize CoralMonSter predictions for test samples that have prompt points.
 """
@@ -5,29 +6,33 @@ Visualize CoralMonSter predictions for test samples that have prompt points.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+# Ensure we can import CoralMonSter if running from tools/
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.append(str(ROOT_DIR))
 
 import torch
 from torch.utils.data import DataLoader
 
-from CoralMonSter import CoralMonSter as CoralModel
 from CoralMonSter import HKCoralConfig
+from CoralMonSter.core.factory import build_model
 from CoralMonSter.data import HKCoralDataset, hkcoral_collate_fn
 from CoralMonSter.utils import save_segmentation_comparison
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualize CoralMonSter predictions with prompts.")
     parser.add_argument("--sam_checkpoint", type=str, required=True, help="Base SAM checkpoint path.")
     parser.add_argument("--student_weights", type=str, required=True, help="Fine-tuned CoralMonSter weights.")
-    parser.add_argument("--dataset_root", type=str, default="datasets/HKCoral")
+    parser.add_argument("--dataset_root", type=str, default="data_storage/HKCoral")
     parser.add_argument("--scenario_name", type=str, default="viz_prompts")
     parser.add_argument("--model_type", type=str, default=None, choices=["vit_h", "vit_l", "vit_b"])
     parser.add_argument("--image_size", type=int, default=1024)
     parser.add_argument("--output_dir", type=str, default="visualizations/prompts")
     parser.add_argument("--max_samples", type=int, default=50)
     return parser.parse_args()
-
 
 @torch.no_grad()
 def main() -> None:
@@ -44,7 +49,7 @@ def main() -> None:
     )
     cfg.resolve_paths()
 
-    model = CoralModel(cfg).to(device)
+    model = build_model(cfg, device)
     weights = torch.load(args.student_weights, map_location="cpu")
     model.load_state_dict(weights.get("model", weights), strict=False)
     model.eval()
@@ -91,7 +96,6 @@ def main() -> None:
             break
 
     print(f"Saved {saved} visualizations to {output_dir}")
-
 
 if __name__ == "__main__":
     main()

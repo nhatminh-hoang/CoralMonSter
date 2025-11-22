@@ -22,7 +22,7 @@ class OptimizationConfig:
     ema_momentum_max: float = 1.0
     grad_clip_norm: float = 1.0
     use_lr_scheduler: bool = True
-    lr_warmup_epochs: int = 5
+    lr_warmup_epochs: int = 10
     lr_min_factor: float = 0.1
     use_teacher_momentum: bool = True
     momentum_skip_epochs: int = 1
@@ -68,7 +68,7 @@ class HKCoralConfig:
         save_dir: Directory where checkpoints, logs, etc. are stored.
     """
 
-    dataset_root: Path = Path("datasets/HKCoral")
+    dataset_root: Path = Path("data_storage/HKCoral")
     split: str = "train"
     image_size: int = 1024
     num_classes: int = 7  # background + six growth forms
@@ -77,6 +77,13 @@ class HKCoralConfig:
     sam_checkpoint: Path = Path("checkpoints/sam_vit_b_coralscop.pth")
     freeze_image_encoder: bool = True
     freeze_prompt_encoder: bool = True
+    use_gradient_checkpointing: bool = False  # Memory optimization for larger batch sizes
+    use_flash_attention: bool = False  # Flash Attention for 8x memory reduction (requires flash-attn)
+    use_lora: bool = False
+    lora_r: int = 4
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
+    lora_target_modules: List[str] = field(default_factory=lambda: ["qkv"])
     scenario_name: str = "default"
     save_dir: Path = Path("checkpoints")
     log_root: Path = Path("logs")

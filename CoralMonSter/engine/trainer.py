@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from CoralMonSter import CoralMonSter
 from CoralMonSter.configs.hkcoral_config import HKCoralConfig
+from CoralMonSter.losses.criterion import CoralCriterion
 from CoralMonSter.utils import (
     SegmentationMeter,
     save_checkpoint,
@@ -31,6 +32,7 @@ class CoralTrainer:
         self.model = model
         self.cfg = cfg
         self.enable_profile = enable_profile
+        self.criterion = CoralCriterion(cfg)
         self.optimizer = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, self.model.parameters()),
             lr=cfg.optimization.learning_rate,
@@ -69,8 +71,8 @@ class CoralTrainer:
             if hasattr(self.model, "set_momentum"):
                 self.model.set_momentum(momentum)
             teacher_temp = self._compute_teacher_temperature(epoch)
-            if hasattr(self.model, "set_teacher_temperature"):
-                self.model.set_teacher_temperature(teacher_temp)
+            self.criterion.set_teacher_temperature(teacher_temp)
+            
             self.model.train()
             start = time.time()
             (
@@ -211,9 +213,11 @@ class CoralTrainer:
             batch = self._to_device(batch, device)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 outputs = self.model(batch)
+                loss_dict = self.criterion(outputs, batch)
+                
             if device.type == "cuda":
                 torch.cuda.synchronize()
-            loss = outputs["total_loss"]
+            loss = loss_dict["total_loss"]
             backward_start = time.time()
             loss.backward()
             if device.type == "cuda":
@@ -237,17 +241,20 @@ class CoralTrainer:
             batch_size = batch["images"].shape[0]
             loss_sum += loss.item() * batch_size
             count += batch_size
-            preds = outputs["logits"].argmax(dim=1).detach().cpu()
+            preds = outputs["student_logits"].argmax(dim=1).detach().cpu()
             masks = batch.get("masks")
             if masks is not None:
                 meter.update(preds, masks.detach().cpu())
             train_loss = loss_sum / max(count, 1)
             loss_postfix = {"loss_total": f"{train_loss:.4f}"}
+            
+            # Update logging for loss components
             for key in ("seg_loss", "mask_kd_loss", "token_kd_loss", "token_cls_loss", "dice_loss", "ce_loss"):
-                if key in outputs:
+                if key in loss_dict:
                     label = key.replace("_loss", "")
-                    loss_postfix[f"loss_{label}"] = f"{outputs[key].item():.4f}"
-                    component_sums[key] = component_sums.get(key, 0.0) + outputs[key].item() * batch_size
+                    loss_postfix[f"loss_{label}"] = f"{loss_dict[key].item():.4f}"
+                    component_sums[key] = component_sums.get(key, 0.0) + loss_dict[key].item() * batch_size
+            
             for key in ("encoder_time", "student_time", "teacher_time"):
                 if key in outputs:
                     timing_totals[key] += outputs[key]
@@ -310,11 +317,13 @@ class CoralTrainer:
             batch = self._to_device(batch, device)
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
                 outputs = self.model.forward(batch, compute_distillation=enable_distillation)
+                loss_dict = self.criterion(outputs, batch)
+                
             self._maybe_log_pca(stage, epoch_idx, batch, outputs)
             batch_size = batch["images"].shape[0]
-            loss_sum += outputs["total_loss"].item() * batch_size
+            loss_sum += loss_dict["total_loss"].item() * batch_size
             count += batch_size
-            preds = outputs["logits"].argmax(dim=1).detach().cpu()
+            preds = outputs["student_logits"].argmax(dim=1).detach().cpu()
             masks = batch.get("masks")
             teacher_masks = None
             # Teacher predictions are optional and only computed when we plan to visualize them.
@@ -348,8 +357,8 @@ class CoralTrainer:
                             teacher_mask=teacher_masks[i] if teacher_masks is not None else None,
                         )
                 for key in ("seg_loss", "mask_kd_loss", "token_kd_loss", "token_cls_loss", "dice_loss", "ce_loss"):
-                    if key in outputs:
-                        component_sums[key] = component_sums.get(key, 0.0) + outputs[key].item() * batch_size
+                    if key in loss_dict:
+                        component_sums[key] = component_sums.get(key, 0.0) + loss_dict[key].item() * batch_size
         return {
             "loss": loss_sum / max(count, 1),
             "miou": meter.mean_iou(),
