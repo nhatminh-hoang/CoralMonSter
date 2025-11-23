@@ -36,7 +36,7 @@ class DistillationConfig:
     """
 
     dice_weight: float = 1.5
-    ce_weight: float = 0.0
+    ce_weight: float = 0.5
     mask_kd_weight: float = 0.0
     token_kd_weight: float = 1.0
     token_kd_metric: str = "ce"

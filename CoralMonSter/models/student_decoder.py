@@ -33,7 +33,7 @@ class PromptFreeMaskDecoder(nn.Module):
         )
 
         self.class_tokens = nn.Parameter(torch.randn(num_classes, self.transformer_dim))
-        nn.init.orthogonal_(self.class_tokens)
+        # nn.init.orthogonal_(self.class_tokens)
         self.semantic_head = nn.Sequential(
             nn.LayerNorm(self.transformer_dim),
             nn.Linear(self.transformer_dim, num_classes),
