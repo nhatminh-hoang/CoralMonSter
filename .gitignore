@@ -8,6 +8,7 @@ confusion_figs/
 .github/
 semantic_seg_ckpt/
 data_storage/
+paper/
 
 *.json
 *.tex

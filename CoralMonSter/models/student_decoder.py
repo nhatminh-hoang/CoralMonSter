@@ -70,7 +70,7 @@ class PromptFreeMaskDecoder(nn.Module):
         upscaled = self.output_upscaling(src)
         upscaled_flat = upscaled.flatten(2)  # B x C' x HW
 
-        token_block = hs[:, -self.num_classes :, :]
+        token_block = hs[:, -self.num_classes :, :] # B x num_classes x transformer_dim
         hyper_in = torch.stack(
             [hyper(token_block[:, i, :]) for i, hyper in enumerate(self.hypernets)],
             dim=1,
