@@ -64,6 +64,24 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
         "use_teacher_momentum": True,
         "center_momentum": 0.99,
     },
+    "sam_optimizer": {
+        "description": "SAM optimizer with AdamW as base optimizer for sharpness-aware minimization",
+        "use_sam_optimizer": True,
+        "sam_rho": 2.0,
+        "sam_adaptive": False,
+        "freeze_image_encoder": True,
+        "use_teacher_momentum": True,
+        "center_momentum": 0.99,
+    },
+    "sam_optimizer_adaptive": {
+        "description": "Adaptive SAM optimizer with AdamW as base optimizer",
+        "use_sam_optimizer": True,
+        "sam_rho": 2.0,
+        "sam_adaptive": True,
+        "freeze_image_encoder": True,
+        "use_teacher_momentum": True,
+        "center_momentum": 0.99,
+    },
 }
 
 
@@ -89,6 +107,12 @@ def apply_scenario_preset(cfg: HKCoralConfig, preset_name: str) -> HKCoralConfig
         cfg.distillation.mask_kd_weight = float(preset["token_kd_weight"])
     if "use_lora" in preset:
         cfg.use_lora = bool(preset["use_lora"])
+    if "use_sam_optimizer" in preset:
+        cfg.optimization.use_sam_optimizer = bool(preset["use_sam_optimizer"])
+    if "sam_rho" in preset:
+        cfg.optimization.sam_rho = float(preset["sam_rho"])
+    if "sam_adaptive" in preset:
+        cfg.optimization.sam_adaptive = bool(preset["sam_adaptive"])
 
     return cfg
 

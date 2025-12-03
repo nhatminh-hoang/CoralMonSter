@@ -26,6 +26,10 @@ class OptimizationConfig:
     lr_min_factor: float = 0.1
     use_teacher_momentum: bool = True
     momentum_skip_epochs: int = 1
+    # SAM optimizer settings
+    use_sam_optimizer: bool = False
+    sam_rho: float = 2.0
+    sam_adaptive: bool = False
 
 
 @dataclass
@@ -36,7 +40,7 @@ class DistillationConfig:
     """
 
     dice_weight: float = 1.5
-    ce_weight: float = 0.0
+    ce_weight: float = 1.0
     mask_kd_weight: float = 0.0
     token_kd_weight: float = 1.0
     token_kd_metric: str = "ce"

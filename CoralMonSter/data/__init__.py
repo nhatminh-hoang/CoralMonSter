@@ -8,7 +8,13 @@ from typing import Any, Dict, List, Optional
 
 import torch
 
-from .hkcoral_dataset import HKCoralDataset, PromptSample, sample_prompt
+from .hkcoral_dataset import (
+    HKCoralDataset,
+    PromptSample,
+    sample_prompt,
+    sample_prompts_gpu,
+    get_class_coordinates_gpu,
+)
 from .coralscapes_dataset import CoralScapesDataset
 
 
@@ -17,9 +23,11 @@ def hkcoral_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     masks = torch.stack([b["mask"] for b in batch])
     original_sizes = torch.stack([b["original_size"] for b in batch])
     file_names = [b["file_name"] for b in batch]
-    point_coords = [b["points"] for b in batch]
-    point_labels = [b["point_labels"] for b in batch]
-    boxes: List[Optional[torch.Tensor]] = [b["box"] for b in batch]
+    
+    # Handle optional prompt fields (may not be present if compute_prompts=False)
+    point_coords = [b.get("points") for b in batch]
+    point_labels = [b.get("point_labels") for b in batch]
+    boxes: List[Optional[torch.Tensor]] = [b.get("box") for b in batch]
     prompt_sets = [b.get("prompt_sets") for b in batch]
 
     timing_totals: Dict[str, float] = {}
@@ -52,5 +60,7 @@ __all__ = [
     "CoralScapesDataset",
     "PromptSample",
     "sample_prompt",
+    "sample_prompts_gpu",
+    "get_class_coordinates_gpu",
     "hkcoral_collate_fn",
 ]

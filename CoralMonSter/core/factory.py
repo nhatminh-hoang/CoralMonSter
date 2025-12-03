@@ -65,4 +65,7 @@ def prepare_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         collate_fn=hkcoral_collate_fn,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=2 if num_workers > 0 else 0,
     )

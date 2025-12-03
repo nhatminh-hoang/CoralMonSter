@@ -25,6 +25,7 @@ from CoralMonSter.utils import (
     save_training_curves,
     save_pca_overlay,
 )
+from CoralMonSter.utils.optimizer import SAM
 
 
 class CoralTrainer:
@@ -33,15 +34,28 @@ class CoralTrainer:
         self.cfg = cfg
         self.enable_profile = enable_profile
         self.criterion = CoralCriterion(cfg)
-        self.optimizer = torch.optim.AdamW(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=cfg.optimization.learning_rate,
-            weight_decay=cfg.optimization.weight_decay,
-        )
+        self.use_sam = getattr(cfg.optimization, "use_sam_optimizer", False)
+        if self.use_sam:
+            self.optimizer = SAM(
+                filter(lambda p: p.requires_grad, self.model.parameters()),
+                base_optimizer=torch.optim.AdamW,
+                rho=getattr(cfg.optimization, "sam_rho", 2.0),
+                adaptive=getattr(cfg.optimization, "sam_adaptive", False),
+                lr=cfg.optimization.learning_rate,
+                weight_decay=cfg.optimization.weight_decay,
+            )
+        else:
+            self.optimizer = torch.optim.AdamW(
+                filter(lambda p: p.requires_grad, self.model.parameters()),
+                lr=cfg.optimization.learning_rate,
+                weight_decay=cfg.optimization.weight_decay,
+            )
         self.scheduler = None
         if self.cfg.optimization.use_lr_scheduler:
+            # For SAM, use the base_optimizer for scheduler
+            scheduler_optimizer = self.optimizer.base_optimizer if self.use_sam else self.optimizer
             self.scheduler = torch.optim.lr_scheduler.LambdaLR(
-                self.optimizer,
+                scheduler_optimizer,
                 lr_lambda=self._lr_schedule,
             )
         self.log_dir = Path(self.cfg.log_dir)
@@ -211,23 +225,54 @@ class CoralTrainer:
                     cpu_total = sum(float(value) for value in loader_timings.values())
                 timing_totals["cpu_loader"] += cpu_total
             batch = self._to_device(batch, device)
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
-                outputs = self.model(batch)
-                loss_dict = self.criterion(outputs, batch)
-                
-            if device.type == "cuda":
-                torch.cuda.synchronize()
-            loss = loss_dict["total_loss"]
+            
             backward_start = time.time()
-            loss.backward()
+            if self.use_sam:
+                # SAM optimizer: two forward-backward passes
+                # First forward-backward pass
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
+                    outputs = self.model(batch)
+                    loss_dict = self.criterion(outputs, batch)
+                loss = loss_dict["total_loss"]
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.cfg.optimization.grad_clip_norm,
+                )
+                self.optimizer.first_step(zero_grad=True)
+                
+                # Second forward-backward pass
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
+                    outputs_second = self.model(batch)
+                    loss_dict_second = self.criterion(outputs_second, batch)
+                loss_second = loss_dict_second["total_loss"]
+                loss_second.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.cfg.optimization.grad_clip_norm,
+                )
+                self.optimizer.second_step(zero_grad=True)
+            else:
+                # Standard optimizer: single forward-backward pass
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
+                    outputs = self.model(batch)
+                    loss_dict = self.criterion(outputs, batch)
+                    
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                loss = loss_dict["total_loss"]
+                loss.backward()
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.cfg.optimization.grad_clip_norm,
+                )
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+            
             if device.type == "cuda":
                 torch.cuda.synchronize()
-            torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(),
-                self.cfg.optimization.grad_clip_norm,
-            )
-            self.optimizer.step()
-            self.optimizer.zero_grad()
             timing_totals["backward_time"] += time.time() - backward_start
             if (
                 self.cfg.optimization.use_teacher_momentum

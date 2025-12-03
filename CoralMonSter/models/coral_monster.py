@@ -16,6 +16,7 @@ from torch import nn
 from CoralMonSter.configs.hkcoral_config import HKCoralConfig
 from CoralMonSter.models.student_decoder import PromptFreeMaskDecoder
 from CoralMonSter.models.backbones import build_sam_backbone
+from CoralMonSter.data.hkcoral_dataset import sample_prompts_gpu
 from peft import LoraConfig, get_peft_model
 
 
@@ -109,8 +110,19 @@ class CoralMonSter(nn.Module):
         )
         
         if distill_active:
+            # Get prompt_sets from batch or compute on GPU
+            prompt_sets = batch.get("prompt_sets")
+            if prompt_sets is None or prompt_sets[0] is None:
+                # Compute prompts on GPU
+                prompt_sets = sample_prompts_gpu(
+                    masks.to(images.device),
+                    self.cfg.num_classes,
+                    self.cfg.ignore_label,
+                    self.cfg.prompt_bins,
+                )
+            
             teacher_points, teacher_labels = self._sample_teacher_prompts(
-                batch.get("prompt_sets"), images.device
+                prompt_sets, images.device
             )
             if teacher_points is not None:
                 teacher_start = time.time()

@@ -32,6 +32,7 @@ def add_common_args(parser: argparse.ArgumentParser):
     group.add_argument(
         "--use_flash_attention",
         action="store_true",
+        default=True,
         help="Use Flash Attention for 8x memory reduction (requires flash-attn package)",
     )
     group.add_argument("--use_lora", action="store_true", help="Enable LoRA for image encoder")
@@ -54,7 +55,7 @@ def add_training_args(parser: argparse.ArgumentParser):
     group.add_argument("--log_pca_features", action="store_true")
     group.add_argument("--pca_samples_per_epoch", type=int, default=2)
     group.add_argument("--resume", type=str, default=None)
-    group.add_argument("--profile", action="store_true")
+    group.add_argument("--profile", action="store_true", default=False)
     group.add_argument("--gpu_devices", type=str, default=None)
     group.add_argument("--prompt_bins", type=parse_prompt_bins, default=None)
     group.add_argument("--train_subset", type=int, default=None)

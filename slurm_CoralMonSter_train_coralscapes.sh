@@ -15,7 +15,7 @@ source ~/.bashrc
 conda activate gpu_11.8
 
 CHECKPOINT="checkpoints/vit_b_coralscop.pth"
-DATASET_ROOT="datasets/CoralScapes"
+DATASET_ROOT="data_storage/CoralScapes"
 DATASET_CACHE_DIR="${DATASET_ROOT}/cache"
 MAX_EPOCHS=60
 BATCH_SIZE=4
