@@ -168,17 +168,27 @@ class CoralMonSter(nn.Module):
         """
         Produce teacher semantic masks (argmax over logits) for visualization.
         """
-
-        prompts = batch.get("prompt_sets")
-        if not prompts:
+        if not self.teacher_ready:
             return None
+
+        # Get prompt_sets from batch or compute on GPU
+        prompts = batch.get("prompt_sets")
+        if prompts is None or prompts[0] is None:
+            masks = batch.get("masks")
+            if masks is None:
+                return None
+            # Compute prompts on GPU
+            prompts = sample_prompts_gpu(
+                masks.to(self.device),
+                self.cfg.num_classes,
+                self.cfg.ignore_label,
+                self.cfg.prompt_bins,
+            )
 
         points, labels = self._sample_teacher_prompts(prompts, self.device)
         if points is None:
             return None
 
-        if not self.teacher_ready:
-            return None
         images = batch["images"].to(self.device)
         embeddings = self.image_encoder(images)
         image_pe = self._image_pe(images.shape[0], images.device)
