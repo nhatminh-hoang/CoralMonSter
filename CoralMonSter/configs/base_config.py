@@ -71,11 +71,12 @@ class BaseCoralConfig:
 
     dataset_root: Path = Path("data_storage/HKCoral")
     split: str = "train"
-    image_size: int = 1024
+    image_size: int = 256
     num_classes: int = 7  # background + six growth forms
     ignore_label: int = 255
     model_type: str = "vit_b"
     sam_checkpoint: Path = Path("checkpoints/sam_vit_b_coralscop.pth")
+    sam_random_init: bool = False
     freeze_image_encoder: bool = True
     freeze_prompt_encoder: bool = False
     use_gradient_checkpointing: bool = False

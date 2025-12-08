@@ -19,8 +19,13 @@ def add_common_args(parser: argparse.ArgumentParser):
     group.add_argument("--dataset_cache_dir", type=str, default=None, help="Cache directory for CoralScapes.")
     group.add_argument("--hf_token", type=str, default=os.environ.get("HF_TOKEN"), help="Hugging Face token.")
     group.add_argument("--sam_checkpoint", type=str, required=True, help="Path to SAM checkpoint.")
+    group.add_argument(
+        "--sam_random_init",
+        action="store_true",
+        help="Ignore SAM checkpoint and start image encoder from random weights (also unfreezes encoder).",
+    )
     group.add_argument("--model_type", type=str, default=None, choices=["vit_h", "vit_l", "vit_b"])
-    group.add_argument("--image_size", type=int, default=1024)
+    group.add_argument("--image_size", type=int, default=256)
     group.add_argument("--gpu", type=int, default=0)
     group.add_argument("--num_workers", type=int, default=4)
     group.add_argument("--batch_size", type=int, default=2)
@@ -78,6 +83,7 @@ def build_config_from_args(args: argparse.Namespace, mode: str = "train") -> Con
         image_size=args.image_size,
         model_type=model_type,
         sam_checkpoint=Path(args.sam_checkpoint),
+        sam_random_init=bool(getattr(args, "sam_random_init", False)),
         scenario_name=getattr(args, "scenario_name", "default"),
         use_gradient_checkpointing=getattr(args, "use_gradient_checkpointing", False),
         use_flash_attention=getattr(args, "use_flash_attention", False),
@@ -123,5 +129,9 @@ def build_config_from_args(args: argparse.Namespace, mode: str = "train") -> Con
         cfg.checkpoint_root = Path(args.output_dir)
         cfg.enable_pca_logging = bool(args.log_pca_features)
         cfg.pca_samples_per_epoch = max(0, args.pca_samples_per_epoch)
+
+    # Forcing random SAM init implies unfreezing the image encoder so it can learn.
+    if getattr(cfg, "sam_random_init", False):
+        cfg.freeze_image_encoder = False
 
     return cfg

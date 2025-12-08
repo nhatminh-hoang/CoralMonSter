@@ -31,6 +31,8 @@ class CoralMonSter(nn.Module):
             self.cfg.sam_checkpoint,
             use_gradient_checkpointing=self.cfg.use_gradient_checkpointing,
             use_flash_attention=self.cfg.use_flash_attention,
+            image_size=self.cfg.image_size,
+            random_init=self.cfg.sam_random_init,
         )
 
         self.image_encoder = sam.image_encoder
