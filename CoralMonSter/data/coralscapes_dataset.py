@@ -11,11 +11,10 @@ import time
 import torch
 from datasets import load_dataset
 from PIL import Image
-from torch.utils.data import Dataset
 from torchvision.transforms import v2 as T
 from torchvision.transforms import functional as F
 
-from .hkcoral_dataset import PromptSample, build_prompt_sets, sample_prompt, get_class_coordinates
+from .base_dataset import BaseCoralDataset
 
 
 @dataclass
@@ -27,7 +26,7 @@ class CoralScapesRecord:
     file_name: str
 
 
-class CoralScapesDataset(Dataset):
+class CoralScapesDataset(BaseCoralDataset):
     """Dataset that streams CoralScapes splits via the Hugging Face hub."""
 
     def __init__(
@@ -45,16 +44,19 @@ class CoralScapesDataset(Dataset):
         hf_token: Optional[str] = None,
         compute_prompts: bool = False,  # Set False to defer to GPU
     ) -> None:
-        super().__init__()
+        prompt_points = max(prompt_bins) if prompt_bins else prompt_points
+        super().__init__(
+            image_size=image_size,
+            num_classes=num_classes,
+            ignore_label=ignore_label,
+            prompt_points=prompt_points,
+            prompt_bins=prompt_bins,
+            compute_prompts=compute_prompts,
+        )
         self.split = split
-        self.prompt_points = prompt_points
-        self.prompt_bins = prompt_bins
-        self.num_classes = num_classes
-        self.ignore_label = ignore_label
         self.dataset_id = dataset_id
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.hf_token = hf_token
-        self.compute_prompts = compute_prompts
         self.dataset = load_dataset(
             self.dataset_id,
             split=split,
@@ -98,30 +100,13 @@ class CoralScapesDataset(Dataset):
         image_tensor = self.image_transform(image)
         timings["image_transform"] = time.perf_counter() - start
 
-        result = {
-            "image": image_tensor,
-            "mask": mask,
-            "original_size": original_size,
-            "file_name": file_name,
-            "timings": timings,
-        }
-
-        # Only compute prompts on CPU if explicitly requested
-        if self.compute_prompts:
-            start = time.perf_counter()
-            class_indices = get_class_coordinates(mask, self.ignore_label)
-            prompt = sample_prompt(class_indices, self.prompt_points, self.num_classes, mask.shape)
-            prompt_sets = build_prompt_sets(class_indices, self.prompt_bins, self.num_classes, mask.shape)
-            timings["prompt_sampling"] = time.perf_counter() - start
-            result.update({
-                "points": prompt.coords,
-                "point_labels": prompt.labels,
-                "box": prompt.box,
-                "prompt_sets": prompt_sets,
-            })
-
-        timings["total"] = sum(timings.values())
-        return result
+        return self._finalize_sample(
+            image=image_tensor,
+            mask=mask,
+            original_size=original_size,
+            file_name=file_name,
+            timings=timings,
+        )
 
 
 __all__ = ["CoralScapesDataset", "CoralScapesRecord"]

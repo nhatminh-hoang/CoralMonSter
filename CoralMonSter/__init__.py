@@ -12,6 +12,7 @@ import sys
 
 from .configs.hkcoral_config import HKCoralConfig, DistillationConfig, OptimizationConfig
 from .configs.coralscapes_config import CoralScapesConfig
+from .configs.base_config import BaseCoralConfig, LoraConfig
 from .models.coral_monster import CoralMonSter
 from .engine.trainer import CoralTrainer
 from . import segment_anything as _segment_anything_module
@@ -20,10 +21,12 @@ from . import segment_anything as _segment_anything_module
 sys.modules.setdefault("segment_anything", _segment_anything_module)
 
 __all__ = [
+    "BaseCoralConfig",
     "HKCoralConfig",
     "CoralScapesConfig",
     "DistillationConfig",
     "OptimizationConfig",
     "CoralMonSter",
+        "LoraConfig",
     "CoralTrainer",
 ]

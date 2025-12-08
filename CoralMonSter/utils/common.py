@@ -36,3 +36,21 @@ def parse_prompt_bins(value: str) -> Tuple[int, ...]:
             "--prompt_bins requires at least one positive integer."
         )
     return tuple(bins)
+
+
+def collect_checkpoints(root: Path, dataset_keyword: Optional[str] = None) -> List[Path]:
+    """Return sorted checkpoint paths under root, optionally filtered by keyword."""
+    checkpoints = [p for p in sorted(Path(root).rglob("*.pth")) if not p.name.endswith("_last.pth")]
+    if dataset_keyword:
+        keyword = dataset_keyword.lower()
+        checkpoints = [p for p in checkpoints if keyword in str(p).lower()]
+    return checkpoints
+
+
+def infer_dataset_from_path(path: Path, dataset_keyword: Optional[str], fallback: str = "hkcoral") -> str:
+    """Infer dataset choice from checkpoint path/keyword fallback to provided default."""
+    lower_path = str(path).lower()
+    keyword_lower = (dataset_keyword or "").lower()
+    if "coralscapes" in lower_path or "coralscapes" in keyword_lower:
+        return "coralscapes"
+    return fallback

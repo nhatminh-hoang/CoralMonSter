@@ -13,11 +13,11 @@ from typing import List, Optional, Tuple
 
 from huggingface_hub import hf_hub_download
 
-from .hkcoral_config import HKCoralConfig
+from .base_config import BaseCoralConfig
 
 
 @dataclass
-class CoralScapesConfig(HKCoralConfig):
+class CoralScapesConfig(BaseCoralConfig):
     """HKCoral configuration variant with CoralScapes defaults and metadata hooks."""
 
     dataset_root: Path = Path("data_storage/CoralScapes")

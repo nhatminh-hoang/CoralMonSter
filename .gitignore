@@ -9,6 +9,8 @@ confusion_figs/
 semantic_seg_ckpt/
 data_storage/
 paper/
+.*/
+vis_*/
 
 *.json
 *.tex

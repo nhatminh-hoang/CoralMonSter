@@ -5,7 +5,7 @@ Visualization helpers for logging CoralMonSter training progress.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, Sequence, Tuple, Optional
+from typing import Dict, Iterable, Sequence, Tuple, Optional, List
 
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend before importing pyplot
@@ -81,6 +81,88 @@ def save_training_curves(history: Iterable[Dict[str, float]], path: Path) -> Non
     plt.ylabel("Pixel Accuracy")
     plt.legend()
     plt.title("Pixel Accuracy")
+
+    plt.tight_layout()
+    plt.savefig(path, dpi=300)
+    plt.close()
+
+
+def save_aggregated_training_curves(run_histories: List[Iterable[Dict[str, float]]], path: Path) -> None:
+    """Overlay multiple run histories with faint per-run lines and bold mean curves.
+
+    Args:
+        run_histories: List of per-run history iterables (each a list of metric dicts).
+        path: Output image path.
+    """
+    histories = [list(h) for h in run_histories if h]
+    if len(histories) < 2:
+        return
+
+    # Align by minimum epoch length across runs
+    min_len = min(len(h) for h in histories)
+    histories = [h[:min_len] for h in histories]
+
+    epochs = [item["epoch"] for item in histories[0]]
+
+    def _series(key: str) -> List[List[float]]:
+        return [[item.get(key, 0.0) for item in hist] for hist in histories]
+
+    train_loss_runs = _series("train_loss")
+    val_loss_runs = _series("val_loss")
+    train_miou_runs = _series("train_miou")
+    val_miou_runs = _series("val_miou")
+    train_pix_runs = _series("train_pix_acc")
+    val_pix_runs = _series("val_pix_acc")
+
+    def _mean(values_runs: List[List[float]]) -> List[float]:
+        return list(np.mean(np.stack(values_runs, axis=0), axis=0))
+
+    mean_train_loss = _mean(train_loss_runs)
+    mean_val_loss = _mean(val_loss_runs)
+    mean_train_miou = _mean(train_miou_runs)
+    mean_val_miou = _mean(val_miou_runs)
+    mean_train_pix = _mean(train_pix_runs)
+    mean_val_pix = _mean(val_pix_runs)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plt.figure(figsize=(15, 4))
+
+    def _plot_runs(run_series: List[List[float]], epochs_seq, color, linestyle="-"):
+        for series in run_series:
+            plt.plot(epochs_seq, series, linestyle=linestyle, color=color, alpha=0.2, linewidth=1)
+
+    # Losses
+    plt.subplot(1, 3, 1)
+    _plot_runs(train_loss_runs, epochs, "#1f77b4", linestyle="--")
+    _plot_runs(val_loss_runs, epochs, "#1f77b4", linestyle="-")
+    plt.plot(epochs, mean_train_loss, linestyle="--", color="#1f77b4", label="Train (mean)", linewidth=2.2)
+    plt.plot(epochs, mean_val_loss, linestyle="-", color="#1f77b4", label="Val (mean)", linewidth=2.2)
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Loss Curves (runs & mean)")
+    plt.legend()
+
+    # mIoU
+    plt.subplot(1, 3, 2)
+    _plot_runs(train_miou_runs, epochs, "#2ca02c", linestyle="--")
+    _plot_runs(val_miou_runs, epochs, "#2ca02c", linestyle="-")
+    plt.plot(epochs, mean_train_miou, linestyle="--", color="#2ca02c", label="Train (mean)", linewidth=2.2)
+    plt.plot(epochs, mean_val_miou, linestyle="-", color="#2ca02c", label="Val (mean)", linewidth=2.2)
+    plt.xlabel("Epoch")
+    plt.ylabel("mIoU")
+    plt.title("mIoU Curves (runs & mean)")
+    plt.legend()
+
+    # Pixel accuracy
+    plt.subplot(1, 3, 3)
+    _plot_runs(train_pix_runs, epochs, "#ff7f0e", linestyle="--")
+    _plot_runs(val_pix_runs, epochs, "#ff7f0e", linestyle="-")
+    plt.plot(epochs, mean_train_pix, linestyle="--", color="#ff7f0e", label="Train (mean)", linewidth=2.2)
+    plt.plot(epochs, mean_val_pix, linestyle="-", color="#ff7f0e", label="Val (mean)", linewidth=2.2)
+    plt.xlabel("Epoch")
+    plt.ylabel("Pixel Accuracy")
+    plt.title("Pixel Accuracy (runs & mean)")
+    plt.legend()
 
     plt.tight_layout()
     plt.savefig(path, dpi=300)

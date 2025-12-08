@@ -23,8 +23,19 @@ if str(ROOT_DIR) not in sys.path:
 import torch
 from CoralMonSter.core.config import add_common_args, build_config_from_args
 from CoralMonSter.engine.runner import CoralRunner
-from CoralMonSter.utils.common import infer_model_type_from_checkpoint
+from CoralMonSter.utils.common import (
+    collect_checkpoints,
+    infer_dataset_from_path,
+    infer_model_type_from_checkpoint,
+)
 from CoralMonSter.utils.visualize import save_confusion_figure
+
+
+def _clone_args(args: argparse.Namespace, **overrides) -> argparse.Namespace:
+    """Create a lightweight argparse.Namespace copy with overrides."""
+    merged = vars(args).copy()
+    merged.update(overrides)
+    return argparse.Namespace(**merged)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate all checkpoints in a directory.")
@@ -48,19 +59,11 @@ def main() -> None:
     args = parse_args()
     runner = CoralRunner(args, mode="eval")
     
-    checkpoint_paths = [
-        p for p in sorted(Path(args.checkpoint_root).rglob("*.pth")) if not p.name.endswith("_last.pth")
-    ]
-    if args.dataset_keyword:
-        keyword = args.dataset_keyword.lower()
-        checkpoint_paths = [p for p in checkpoint_paths if keyword in str(p).lower()]
+    checkpoint_paths = collect_checkpoints(Path(args.checkpoint_root), args.dataset_keyword)
     if not checkpoint_paths:
-        if args.dataset_keyword:
-            print(
-                f"No eligible checkpoints under '{args.checkpoint_root}' containing keyword '{args.dataset_keyword}'."
-            )
-        else:
-            print(f"No eligible checkpoints found under '{args.checkpoint_root}'.")
+        message = "No eligible checkpoints found under" if not args.dataset_keyword else "No eligible checkpoints under"
+        suffix = f" containing keyword '{args.dataset_keyword}'" if args.dataset_keyword else ""
+        print(f"{message} '{args.checkpoint_root}'{suffix}.")
         return
 
     results: List[dict] = []
@@ -73,24 +76,15 @@ def main() -> None:
             print(f"[Info] Could not infer model type from '{ckpt_path.name}', defaulting to 'vit_h'.")
         elif args.model_type is None and inferred is not None:
             print(f"[Info] Detected backbone '{inferred}' from '{ckpt_path.name}'.")
-            
-        # Determine dataset choice logic (kept from original)
-        dataset_choice = args.dataset
-        if not dataset_choice: # If not explicitly set, try to infer
-             lower_path = str(ckpt_path).lower()
-             keyword_lower = args.dataset_keyword.lower() if args.dataset_keyword else ""
-             if "coralscapes" in lower_path or "coralscapes" in keyword_lower:
-                 dataset_choice = "coralscapes"
-             else:
-                 dataset_choice = "hkcoral"
-        
-        # Temporarily override args for build_config
-        args.dataset = dataset_choice
-        args.model_type = model_type
-        args.scenario_name = scenario_name
-        
-        cfg = build_config_from_args(args, mode="eval")
-        cfg.checkpoint_root = Path(args.checkpoint_root) # Restore original checkpoint root if needed
+        dataset_choice = infer_dataset_from_path(ckpt_path, args.dataset_keyword, fallback=args.dataset)
+        cfg_args = _clone_args(
+            args,
+            dataset=dataset_choice,
+            model_type=model_type,
+            scenario_name=scenario_name,
+        )
+        cfg = build_config_from_args(cfg_args, mode="eval")
+        cfg.checkpoint_root = Path(args.checkpoint_root)
         cfg.log_root = Path(args.log_root)
         cfg.resolve_paths()
 

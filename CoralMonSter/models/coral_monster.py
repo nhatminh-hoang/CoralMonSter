@@ -5,7 +5,6 @@ Main CoralMonSter model definition.
 from __future__ import annotations
 
 import copy
-import random
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -14,9 +13,8 @@ import torch.nn.functional as F
 from torch import nn
 
 from CoralMonSter.configs.hkcoral_config import HKCoralConfig
-from CoralMonSter.models.student_decoder import PromptFreeMaskDecoder
+from CoralMonSter.models.student_decoder import SemanticQueryDecoder
 from CoralMonSter.models.backbones import build_sam_backbone
-from CoralMonSter.data.hkcoral_dataset import sample_prompts_gpu
 from peft import LoraConfig, get_peft_model
 
 
@@ -37,13 +35,11 @@ class CoralMonSter(nn.Module):
 
         self.image_encoder = sam.image_encoder
         self.prompt_encoder = sam.prompt_encoder
-        self.student_decoder = PromptFreeMaskDecoder(sam.mask_decoder, num_classes=self.cfg.num_classes)
-        self.teacher_decoder: Optional[PromptFreeMaskDecoder] = None
-        self.teacher_ready = False
-        self.momentum = self.cfg.optimization.ema_momentum_min
+
+        self.freeze_image_encoder = bool(self.cfg.freeze_image_encoder)
+        self.freeze_prompt_encoder = bool(self.cfg.freeze_prompt_encoder)
 
         if self.cfg.use_lora:
-            print(f"Enabling LoRA for image encoder with r={self.cfg.lora_r}, alpha={self.cfg.lora_alpha}, dropout={self.cfg.lora_dropout}, target={self.cfg.lora_target_modules}")
             lora_config = LoraConfig(
                 r=self.cfg.lora_r,
                 lora_alpha=self.cfg.lora_alpha,
@@ -54,13 +50,27 @@ class CoralMonSter(nn.Module):
             )
             self.image_encoder = get_peft_model(self.image_encoder, lora_config)
             self.image_encoder.print_trainable_parameters()
-        elif self.cfg.freeze_image_encoder:
+            self.freeze_image_encoder = False
+        elif self.freeze_image_encoder:
             for p in self.image_encoder.parameters():
                 p.requires_grad_(False)
-        if self.cfg.freeze_prompt_encoder:
+            self.image_encoder.eval()
+
+        if self.freeze_prompt_encoder:
             for p in self.prompt_encoder.parameters():
                 p.requires_grad_(False)
             self.prompt_encoder.eval()
+
+        self.class_queries = nn.Parameter(
+            torch.randn(self.cfg.num_classes, sam.mask_decoder.transformer_dim)
+        )
+
+        self.student_decoder = SemanticQueryDecoder(
+            sam.mask_decoder, num_classes=self.cfg.num_classes
+        )
+        self.teacher_decoder: Optional[SemanticQueryDecoder] = None
+        self.teacher_ready = False
+        self.momentum = self.cfg.optimization.ema_momentum_min
 
         self.student_token_proj = nn.Linear(self.student_decoder.transformer_dim, 256)
         self.teacher_token_proj = nn.Identity()
@@ -75,24 +85,28 @@ class CoralMonSter(nn.Module):
         masks = batch.get("masks")
         batch_size = images.shape[0]
 
-        enc_start = time.time()
-        image_embeddings = self.image_encoder(images)
-        encoder_time = time.time() - enc_start
-        image_pe = self._image_pe(batch_size, images.device)
-        encoder_snapshot = None
-        if getattr(self.cfg, "enable_pca_logging", False):
-            encoder_snapshot = image_embeddings.detach()
+        image_embeddings, image_pe, class_queries, encoder_time, encoder_snapshot = self._prepare_batch(images)
+        # print(
+        #     f"[CoralMonSter] images={tuple(images.shape)} embeddings={tuple(image_embeddings.shape)} "
+        #     f"class_queries={tuple(class_queries.shape)}"
+        # )
 
         student_start = time.time()
-        student_out = self.student_decoder(image_embeddings, image_pe)
+        student_out = self.student_decoder(image_embeddings, image_pe, class_queries)
         student_time = time.time() - student_start
+
+        target_size = masks.shape[-2:] if masks is not None else (self.cfg.image_size, self.cfg.image_size)
         logits = F.interpolate(
             student_out["mask_logits"],
-            size=masks.shape[-2:] if masks is not None else (self.cfg.image_size, self.cfg.image_size),
+            size=target_size,
             mode="bilinear",
             align_corners=False,
         )
-        
+        # print(
+        #     f"[CoralMonSter] student mask_logits={tuple(student_out['mask_logits'].shape)} "
+        #     f"interp logits={tuple(logits.shape)}"
+        # )
+
         outputs = {
             "student_logits": logits,
             "student_token_logits": student_out.get("token_logits"),
@@ -108,53 +122,30 @@ class CoralMonSter(nn.Module):
             and self.distillation_enabled
             and self.teacher_ready
         )
-        
-        if distill_active:
-            # Get prompt_sets from batch or compute on GPU
-            prompt_sets = batch.get("prompt_sets")
-            if prompt_sets is None or prompt_sets[0] is None:
-                # Compute prompts on GPU
-                prompt_sets = sample_prompts_gpu(
-                    masks.to(images.device),
-                    self.cfg.num_classes,
-                    self.cfg.ignore_label,
-                    self.cfg.prompt_bins,
-                )
-            
-            teacher_points, teacher_labels = self._sample_teacher_prompts(
-                prompt_sets, images.device
-            )
-            if teacher_points is not None:
-                teacher_start = time.time()
-                teacher_out = self._teacher_forward(
-                    image_embeddings,
-                    image_pe,
-                    teacher_points,
-                    teacher_labels,
-                    batch.get("boxes"),
-                    return_logits=True,
-                )
-                outputs["teacher_time"] = time.time() - teacher_start
-                outputs["teacher_logits"] = teacher_out.get("mask_logits")
-                
-                student_tokens = self.student_token_proj(student_out["token_embeddings"]).mean(dim=1)
-                teacher_tokens = self.teacher_token_proj(teacher_out["token_features"])
-                
-                outputs["student_tokens"] = student_tokens
-                outputs["teacher_tokens"] = teacher_tokens
-                outputs["teacher_center"] = self.teacher_center.clone()
 
+        if distill_active:
+            teacher_outputs = self._maybe_run_teacher(
+                batch=batch,
+                image_embeddings=image_embeddings,
+                image_pe=image_pe,
+                class_queries=class_queries,
+                target_size=target_size,
+            )
+            if teacher_outputs is not None:
+                outputs.update(teacher_outputs)
+                student_tokens = self.student_token_proj(student_out["token_embeddings"]).mean(dim=1)
+                outputs["student_tokens"] = student_tokens
+                outputs["teacher_center"] = self.teacher_center.clone()
                 if self.training:
-                    self._update_teacher_center(teacher_tokens.detach())
+                    self._update_teacher_center(teacher_outputs["teacher_tokens"].detach())
 
         return outputs
 
     @torch.no_grad()
     def predict(self, images: torch.Tensor, original_sizes: torch.Tensor) -> torch.Tensor:
         self.eval()
-        embeddings = self.image_encoder(images.to(self.device))
-        pe = self._image_pe(images.shape[0], images.device)
-        out = self.student_decoder(embeddings, pe)
+        embeddings, pe, class_queries, _, _ = self._prepare_batch(images)
+        out = self.student_decoder(embeddings, pe, class_queries)
         logits = F.interpolate(out["mask_logits"], size=(self.cfg.image_size, self.cfg.image_size), mode="bilinear", align_corners=False)
         results = []
         for idx in range(images.shape[0]):
@@ -171,92 +162,29 @@ class CoralMonSter(nn.Module):
         if not self.teacher_ready:
             return None
 
-        # Get prompt_sets from batch or compute on GPU
-        prompts = batch.get("prompt_sets")
-        if prompts is None or prompts[0] is None:
-            masks = batch.get("masks")
-            if masks is None:
-                return None
-            # Compute prompts on GPU
-            prompts = sample_prompts_gpu(
-                masks.to(self.device),
-                self.cfg.num_classes,
-                self.cfg.ignore_label,
-                self.cfg.prompt_bins,
-            )
-
-        points, labels = self._sample_teacher_prompts(prompts, self.device)
-        if points is None:
+        prompt_tokens = self._resolve_teacher_prompts(batch, self.device, require_gt=True)
+        if prompt_tokens is None:
             return None
 
         images = batch["images"].to(self.device)
-        embeddings = self.image_encoder(images)
-        image_pe = self._image_pe(images.shape[0], images.device)
-        teacher_out = self._teacher_forward(
-            embeddings,
-            image_pe,
-            points,
-            labels,
-            batch.get("boxes"),
-            return_logits=True,
-        )
+        embeddings, image_pe, class_queries, _, _ = self._prepare_batch(images)
         if "masks" in batch and batch["masks"] is not None:
             target_size = batch["masks"].shape[-2:]
         else:
             target_size = (self.cfg.image_size, self.cfg.image_size)
-        logits = teacher_out["mask_logits"]
-        logits = F.interpolate(logits, size=target_size, mode="bilinear", align_corners=False)
-        return logits.argmax(dim=1)
 
-    def _teacher_forward(
-        self,
-        image_embeddings: torch.Tensor,
-        image_pe: torch.Tensor,
-        points: Optional[torch.Tensor],
-        labels: Optional[torch.Tensor],
-        boxes_data: Optional[List[Optional[torch.Tensor]]],
-        return_logits: bool = False,
-    ) -> Dict[str, torch.Tensor]:
-        if not self.teacher_ready:
-            raise RuntimeError("Teacher decoder not initialized yet.")
-        boxes = self._stack_boxes(boxes_data or [], image_embeddings.device)
-
-        sparse_embeddings, _ = self.prompt_encoder(
-            points=(points, labels) if points is not None else None,
-            boxes=boxes,
-            masks=None,
+        teacher_result = None
+        teacher_result = self._run_teacher_concat(
+            image_embeddings=embeddings,
+            image_pe=image_pe,
+            class_queries=class_queries,
+            prompt_tokens=prompt_tokens,
+            target_size=target_size,
         )
-
-        query_embeddings = self._build_teacher_queries(image_embeddings.shape[0], sparse_embeddings)
-        decoder_out = self.teacher_decoder(
-            image_embeddings,
-            image_pe,
-            prompt_embeddings=query_embeddings,
-            prepend_class_queries=False,
-        )
-        teacher_logits = decoder_out["mask_logits"]
-        teacher_probs = torch.softmax(teacher_logits, dim=1)
-        token_features = decoder_out["token_embeddings"].mean(dim=1)
-
-        result = {
-            "mask_prob": teacher_probs.max(dim=1, keepdim=True)[0].detach(),
-            "token_features": token_features.detach(),
-        }
-        if return_logits:
-            result["mask_logits"] = teacher_logits.detach()
-        return result
-
-    def _build_teacher_queries(
-        self,
-        batch_size: int,
-        prompt_embeddings: Optional[torch.Tensor],
-    ) -> torch.Tensor:
-        if self.teacher_decoder is None:
-            raise RuntimeError("Teacher decoder not initialized")
-        class_queries = self.teacher_decoder.class_tokens.unsqueeze(0).expand(batch_size, -1, -1)
-        if prompt_embeddings is None:
-            return class_queries
-        return torch.cat([prompt_embeddings, class_queries], dim=1)
+        if teacher_result is None:
+            return None
+        logits, _, _ = teacher_result
+        return logits.detach().argmax(dim=1)
 
     def _image_pe(self, batch_size: int, device: torch.device) -> torch.Tensor:
         pe = self.prompt_encoder.get_dense_pe().to(device)
@@ -264,52 +192,152 @@ class CoralMonSter(nn.Module):
             pe = pe.expand(batch_size, -1, -1, -1)
         return pe
 
-    @staticmethod
-    def _stack_boxes(boxes: List[Optional[torch.Tensor]], device: torch.device) -> Optional[torch.Tensor]:
-        if not any(b is not None for b in boxes):
-            return None
-        stacked = []
-        for box in boxes:
-            if box is None:
-                stacked.append(torch.zeros(4, device=device))
-            else:
-                stacked.append(box.to(device))
-        return torch.stack(stacked, dim=0)
+    def _prepare_batch(
+        self, images: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, Optional[torch.Tensor]]:
+        """Encode images once and prepare shared positional encodings and class queries."""
+        # images (B, 3, H, W)
+        image_embeddings, image_pe, encoder_time, encoder_snapshot = self._encode_images(images) # (B, D, H, W), (B, D, H, W)
+        class_queries = self.class_queries.unsqueeze(0).expand(images.shape[0], -1, -1) # (B, D) -> (B, K, D)
+        return image_embeddings, image_pe, class_queries, encoder_time, encoder_snapshot
 
-    def _sample_teacher_prompts(
+    def _resolve_teacher_prompts(
         self,
-        prompt_sets: Optional[List[Optional[Dict[int, Any]]]],
+        batch: Dict[str, Any],
         device: torch.device,
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-        if not prompt_sets:
-            return None, None
-        selected: List[Optional[Any]] = []
-        max_points = 0
-        for prompts in prompt_sets:
-            if not prompts:
-                selected.append(None)
-                continue
-            available = [k for k, v in prompts.items() if v.coords.numel() > 0]
-            if not available:
-                selected.append(None)
-                continue
-            choice = random.choice(available)
-            sample = prompts[choice]
-            selected.append(sample)
-            max_points = max(max_points, sample.coords.shape[0])
+        require_gt: bool = False,
+    ) -> Optional[torch.Tensor]:
+        gt_points = batch.get("gt_points")
+        if gt_points is None:
+            if require_gt:
+                raise ValueError("gt_points is required for teacher prompts but was not provided")
+            return None
+        return self._encode_gt_prompts(gt_points.to(device))
 
-        if max_points == 0:
-            return None, None
+    def _encode_gt_prompts(self, gt_points: torch.Tensor) -> Optional[torch.Tensor]:
+        """
+        Encode per-class ground-truth points for teacher guidance.
 
-        coords = torch.zeros((len(selected), max_points, 2), device=device)
-        labels = -torch.ones((len(selected), max_points), device=device)
-        for idx, sample in enumerate(selected):
-            if sample is None or sample.coords.numel() == 0:
-                continue
-            count = min(sample.coords.shape[0], max_points)
-            coords[idx, :count] = sample.coords[:count].to(device)
-            labels[idx, :count] = sample.labels[:count].to(device)
-        return coords, labels
+        Expects gt_points shaped (B, num_classes, points_per_class, 2).
+        Padding slots should be filled with -1; these are masked out.
+        """
+
+        if gt_points is None:
+            return None
+
+        b, num_classes, points_per_class, _ = gt_points.shape
+        coords = gt_points.to(self.device, dtype=torch.float32).view(
+            b, num_classes * points_per_class, 2
+        )
+        labels = torch.ones(
+            (b, num_classes * points_per_class),
+            device=self.device,
+            dtype=torch.int64,
+        )
+
+        invalid = coords.lt(0).any(dim=-1)
+        labels[invalid] = -1
+        coords = coords.clone()
+        coords[invalid] = 0.0
+
+        sparse_embeddings, _ = self.prompt_encoder(
+            points=(coords, labels),
+            boxes=None,
+            masks=None,
+        )
+        if sparse_embeddings.numel() == 0:
+            return None
+        # print(
+        #     f"[CoralMonSter] gt_points coords={tuple(coords.shape)} labels={tuple(labels.shape)} "
+        #     f"prompt_embeddings={tuple(sparse_embeddings.shape)}"
+        # )
+        return sparse_embeddings
+
+    def _encode_images(
+        self, images: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, float, Optional[torch.Tensor]]:
+        enc_start = time.time()
+        if self.freeze_image_encoder:
+            with torch.no_grad():
+                image_embeddings = self.image_encoder(images)
+        else:
+            image_embeddings = self.image_encoder(images)
+        encoder_time = time.time() - enc_start
+        image_pe = self._image_pe(images.shape[0], images.device)
+        encoder_snapshot = image_embeddings.detach() if getattr(self.cfg, "enable_pca_logging", False) else None
+        return image_embeddings, image_pe, encoder_time, encoder_snapshot
+
+    def _maybe_run_teacher(
+        self,
+        batch: Dict[str, Any],
+        image_embeddings: torch.Tensor,
+        image_pe: torch.Tensor,
+        class_queries: torch.Tensor,
+        target_size: Tuple[int, int],
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        prompt_tokens = self._resolve_teacher_prompts(batch, image_embeddings.device, require_gt=True)
+        if prompt_tokens is None:
+            return None
+
+        teacher_start = time.time()
+        teacher_result = self._run_teacher_concat(
+            image_embeddings=image_embeddings,
+            image_pe=image_pe,
+            class_queries=class_queries,
+            prompt_tokens=prompt_tokens,
+            target_size=target_size,
+        )
+        if teacher_result is None:
+            return None
+
+        teacher_logits, teacher_class_tokens, teacher_tokens = teacher_result
+        return {
+            "teacher_time": time.time() - teacher_start,
+            "teacher_logits": teacher_logits.detach(),
+            "teacher_tokens": teacher_tokens,
+        }
+
+    def _run_teacher_concat(
+        self,
+        image_embeddings: torch.Tensor,
+        image_pe: torch.Tensor,
+        class_queries: torch.Tensor,
+        prompt_tokens: torch.Tensor,
+        target_size: Tuple[int, int],
+    ) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        """
+        Run privileged teacher path: concat queries + prompts, attend, slice, mask.
+        Returns interpolated mask logits, class tokens, and pooled token features.
+        """
+
+        # class_queries: (B, K, D), prompt_tokens: (B, K*P, D)
+
+        teacher_input = torch.cat([class_queries, prompt_tokens], dim=1)
+        refined_tokens, upscaled_feats = self.teacher_decoder.run_transformer(
+            image_embeddings=image_embeddings,
+            image_pe=image_pe,
+            input_tokens=teacher_input,
+        )
+
+        teacher_class_tokens = refined_tokens[:, : self.cfg.num_classes, :]
+        teacher_mask_logits = self.teacher_decoder.generate_masks(
+            teacher_class_tokens,
+            upscaled_feats,
+        )
+        teacher_logits = F.interpolate(
+            teacher_mask_logits,
+            size=target_size,
+            mode="bilinear",
+            align_corners=False,
+        )
+        teacher_tokens = self.teacher_token_proj(teacher_class_tokens).mean(dim=1)
+        # print(
+        #     f"[CoralMonSter] prompt_tokens={tuple(prompt_tokens.shape)} concat={tuple(teacher_input.shape)} "
+        #     f"refined={tuple(refined_tokens.shape)} class_tokens={tuple(teacher_class_tokens.shape)} "
+        #     f"teacher_logits={tuple(teacher_logits.shape)} teacher_tokens={tuple(teacher_tokens.shape)}"
+        # )
+        return teacher_logits, teacher_class_tokens, teacher_tokens
+
 
     @property
     def device(self) -> torch.device:

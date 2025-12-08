@@ -36,15 +36,15 @@ def build_dataset(cfg: ConfigType, split: str, dataset_choice: str = "hkcoral"):
         )
     
     return HKCoralDataset(
-        cfg.dataset_root,
-        split,
-        cfg.image_size,
-        cfg.num_classes,
-        cfg.ignore_label,
-        cfg.distillation.prompt_points, # Accessing directly from cfg structure
-        cfg.prompt_bins,
-        cfg.image_mean,
-        cfg.image_std,
+        root=cfg.dataset_root,
+        split=split,
+        image_size=cfg.image_size,
+        num_classes=cfg.num_classes,
+        ignore_label=cfg.ignore_label,
+        prompt_points=cfg.distillation.prompt_points,
+        prompt_bins=cfg.prompt_bins,
+        mean=cfg.image_mean,
+        std=cfg.image_std,
     )
 
 def prepare_dataloader(

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from CoralMonSter.configs.hkcoral_config import HKCoralConfig
+from CoralMonSter.configs.base_config import BaseCoralConfig
 
 
 SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
@@ -85,7 +85,7 @@ SCENARIO_PRESETS: Dict[str, Dict[str, object]] = {
 }
 
 
-def apply_scenario_preset(cfg: HKCoralConfig, preset_name: str) -> HKCoralConfig:
+def apply_scenario_preset(cfg: BaseCoralConfig, preset_name: str) -> BaseCoralConfig:
     preset = SCENARIO_PRESETS.get(preset_name)
     if preset is None:
         raise ValueError(f"Unknown scenario preset '{preset_name}'")

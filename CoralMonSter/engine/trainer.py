@@ -74,7 +74,7 @@ class CoralTrainer:
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
         test_loader: Optional[DataLoader] = None,
-    ) -> Path:
+    ) -> tuple[Optional[Path], Optional[Dict[str, object]]]:
         device = next(self.model.parameters()).device
         profiled = False
         skip_epochs = getattr(self.cfg.optimization, "momentum_skip_epochs", 0)
@@ -166,6 +166,8 @@ class CoralTrainer:
             if self.scheduler is not None:
                 self.scheduler.step()
 
+        best_path = self.best_model_path if self.best_miou > 0 else None
+        test_metrics = None
         if test_loader is not None:
             test_vis_dir = self.log_dir / "test_visuals"
             test_metrics = self.evaluate(
@@ -185,7 +187,7 @@ class CoralTrainer:
                 f"Test set - loss={test_metrics['loss']:.4f}, "
                 f"mIoU={test_metrics['miou']:.4f}, pixAcc={test_metrics['pix_acc']:.4f}"
             )
-        return self.best_model_path if self.best_miou > 0 else None
+        return best_path, test_metrics
 
     def _train_one_epoch(
         self,

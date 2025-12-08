@@ -5,11 +5,11 @@ import os
 from pathlib import Path
 from typing import Optional, Union, List
 
-from CoralMonSter import HKCoralConfig, CoralScapesConfig
+from CoralMonSter import BaseCoralConfig, HKCoralConfig, CoralScapesConfig
 from CoralMonSter.configs.scenarios import SCENARIO_PRESETS, apply_scenario_preset
 from CoralMonSter.utils.common import parse_prompt_bins
 
-ConfigType = Union[HKCoralConfig, CoralScapesConfig]
+ConfigType = Union[BaseCoralConfig, HKCoralConfig, CoralScapesConfig]
 
 def add_common_args(parser: argparse.ArgumentParser):
     """Add arguments common to training and evaluation."""
@@ -49,6 +49,8 @@ def add_training_args(parser: argparse.ArgumentParser):
     group.add_argument("--max_epochs", type=int, default=40)
     group.add_argument("--learning_rate", type=float, default=1e-4)
     group.add_argument("--weight_decay", type=float, default=0.01)
+    group.add_argument("--seed", type=int, default=42, help="Base random seed for reproducible multi-run training")
+    group.add_argument("--num_runs", type=int, default=1, help="Number of repeated runs per scenario")
     group.add_argument("--ema_momentum_min", type=float, default=0.996)
     group.add_argument("--ema_momentum_max", type=float, default=1.0)
     group.add_argument("--output_dir", type=str, default="checkpoints")
@@ -79,11 +81,6 @@ def build_config_from_args(args: argparse.Namespace, mode: str = "train") -> Con
         scenario_name=getattr(args, "scenario_name", "default"),
         use_gradient_checkpointing=getattr(args, "use_gradient_checkpointing", False),
         use_flash_attention=getattr(args, "use_flash_attention", False),
-        use_lora=getattr(args, "use_lora", False),
-        lora_r=getattr(args, "lora_r", 4),
-        lora_alpha=getattr(args, "lora_alpha", 32),
-        lora_dropout=getattr(args, "lora_dropout", 0.05),
-        lora_target_modules=getattr(args, "lora_target_modules", ["qkv"]),
     )
 
     if dataset_choice == "coralscapes":
@@ -95,12 +92,23 @@ def build_config_from_args(args: argparse.Namespace, mode: str = "train") -> Con
     else:
         cfg = HKCoralConfig(**base_kwargs)
 
+    # Configure LoRA knobs via compatibility properties
+    cfg.use_lora = getattr(args, "use_lora", cfg.use_lora)
+    cfg.lora_r = getattr(args, "lora_r", cfg.lora_r)
+    cfg.lora_alpha = getattr(args, "lora_alpha", cfg.lora_alpha)
+    cfg.lora_dropout = getattr(args, "lora_dropout", cfg.lora_dropout)
+    cfg.lora_target_modules = getattr(args, "lora_target_modules", cfg.lora_target_modules)
+
+    # Propagate loader knobs for both train and eval paths
+    cfg.optimization.batch_size = getattr(args, "batch_size", cfg.optimization.batch_size)
+    cfg.optimization.num_workers = getattr(args, "num_workers", cfg.optimization.num_workers)
+
     if mode == "train":
         cfg.freeze_image_encoder = True
         if args.scenario_preset:
             cfg = apply_scenario_preset(cfg, args.scenario_preset)
             if args.scenario_name == "default":
-                 cfg.scenario_name = args.scenario_preset # Update name if default
+                cfg.scenario_name = args.scenario_preset  # Update name if default
         
         if args.prompt_bins:
             cfg.prompt_bins = args.prompt_bins
