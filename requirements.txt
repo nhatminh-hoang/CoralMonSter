@@ -1,0 +1,27 @@
+# Core PyTorch and vision libraries
+torch
+torchvision
+
+# Data processing and utilities
+numpy
+Pillow
+tqdm
+
+# Hugging Face ecosystem
+datasets
+huggingface_hub
+transformers
+
+# Model-related dependencies
+peft
+segmentation-models-pytorch
+timm
+
+# Visualization and plotting
+matplotlib
+
+# Additional utilities
+pycocotools
+
+# Optional: Computer vision tasks (used for mask processing)
+opencv-python
