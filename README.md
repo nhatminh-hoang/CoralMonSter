@@ -38,11 +38,6 @@ To reproduce the **HKCoral SOTA (57.28% mIoU)** results using the recommended sp
 python train.py --config configs/hkcoral_vit_b.yaml
 ```
 
-This configuration uses:
-- **Optimizer**: AdamW (lr=1e-4)
-- **Distillation**: Teacher-Student with EMA and DINO Centering
-- **Losses**: Dice + Mask Distillation (MSE) + Token Distillation (CE)
-
 ### Evaluation
 
 To evaluate a trained checkpoint:
