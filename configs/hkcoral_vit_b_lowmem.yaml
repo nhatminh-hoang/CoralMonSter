@@ -1,0 +1,41 @@
+# HKCoral Configuration for ViT-B (Low Memory - 6GB GPU)
+# Reduced resolution for testing on RTX 3060 Laptop (6GB)
+
+data:
+  dataset: "hkcoral"
+  root: "./data_storage/HKCoral"
+  split: "train"
+  image_size: 512  # Reduced from 1024
+  num_classes: 7
+
+model:
+  type: "vit_b"
+  checkpoint: "./checkpoints/vit_b_coralscop.pth"
+  freeze_image_encoder: true  # Freeze to save memory on gradients
+  num_classes: 7
+
+optimizer:
+  name: AdamW
+  lr: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+distillation:
+  warmup_steps: 675
+  momentum_start: 0.996
+  momentum_end: 1.0
+  teacher_temp_start: 0.04
+  teacher_temp_end: 0.07
+  student_temp: 0.1
+  
+  # Loss Weights
+  dice_weight: 1.5
+  mask_kd_weight: 1.0
+  token_kd_weight: 1.5
+
+training:
+  max_epochs: 5  # Reduced for testing
+  batch_size: 4  # Reduced for 6GB GPU
+  num_workers: 4
+  log_interval: 5
+  save_dir: "checkpoints/hkcoral_lowmem"
