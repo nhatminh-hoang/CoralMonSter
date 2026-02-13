@@ -15,7 +15,9 @@ vis_*/
 *.json
 *.tex
 *.sty
+*.pdf
 
 train.py
 
 legacy/
+project_page/

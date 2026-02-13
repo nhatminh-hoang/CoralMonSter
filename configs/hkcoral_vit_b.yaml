@@ -1,42 +1,80 @@
-# HKCoral Configuration for ViT-B (Clean)
-# Based on Table 2 of the paper
+# =====================================================================
+# CoralMonSter Configuration — HKCoral Dataset (ViT-B)
+# =====================================================================
+#
+# Paper: "CoralMonSter: Prompt-Free Segment Anything via Momentum
+#          Distillation for Automated Coral Reef Monitoring"
+#
+# All hyperparameters from Table 1
+#
+# Dataset: HKCoral — 2,515 images, 7 classes, dense annotations
+#   Classes: Background, Massive, Encrusting, Branching,
+#            Laminar, Foliaceous, Columnar
+# =====================================================================
 
+scenario_name: "hkcoral_vit_b"
+
+# ── Data ─────────────────────────────────────────────────────────────
 data:
   dataset: "hkcoral"
   root: "./data_storage/HKCoral"
-  split: "train"
-  image_size: 1024
-  # HKCoral classes: background + 6 growth forms = 7
-  num_classes: 7
+  image_size: 1024             # H = W = 1024 (Table 1)
+  num_classes: 7               # 6 growth forms + background
+  ignore_label: 255            # standard ignore index
 
+  # SAM-compatible normalization (ImageNet)
+  image_mean: [0.485, 0.456, 0.406]
+  image_std:  [0.229, 0.224, 0.225]
+
+# ── Model ────────────────────────────────────────────────────────────
 model:
   type: "vit_b"
-  checkpoint: "./checkpoints/vit_b_coralscop.pth"
-  freeze_image_encoder: false # Default unfrozen as per paper
+  checkpoint: "./checkpoints/vit_b_coralscop.pth"  # SAM ViT-B pretrained
+  freeze_image_encoder: false  # Unfrozen — best performance per Table 3
   num_classes: 7
 
+# ── Optimizer (Table 1) ─────────────────────────────────────────────
 optimizer:
   name: AdamW
   lr: 1.0e-4
   weight_decay: 0.01
   betas: [0.9, 0.999]
 
+# ── Distillation (Table 1, Section 3.2.4, Eq. 15) ──────────────────
 distillation:
-  warmup_steps: 675
-  momentum_start: 0.996
-  momentum_end: 1.0
-  teacher_temp_start: 0.04
-  teacher_temp_end: 0.07
-  student_temp: 0.1
-  
-  # Loss Weights
-  dice_weight: 1.5
-  mask_kd_weight: 1.0
-  token_kd_weight: 1.5
+  # Loss weights (Eq. 5, 15)
+  dice_weight: 1.5             # λ_dice
+  ce_weight: 1.5               # λ_CE
+  mask_kd_weight: 1.0          # λ_mask
+  token_kd_weight: 1.5         # λ_token
 
+  # EMA momentum schedule: sinusoidal from start → end
+  momentum_start: 0.996        # α_start
+  momentum_end: 1.0            # α_end
+
+  # Teacher temperature schedule: sinusoidal from start → end
+  teacher_temp_start: 0.04     # τ_t start
+  teacher_temp_end: 0.07       # τ_t end
+  student_temp: 0.1            # τ_s (fixed)
+
+  # Warmup: distillation disabled for first N epochs (~3% of training)
+  warmup_epochs: 1
+
+  # Number of GT points per class for teacher (K in Eq. 7)
+  gt_points_per_class: 10
+
+# ── Training ────────────────────────────────────────────────────────
 training:
   max_epochs: 50
-  batch_size: 2
+  batch_size: 2                # Table 1
   num_workers: 4
   log_interval: 10
-  save_dir: "checkpoints/hkcoral_clean"
+
+  # LR schedule: cosine with linear warmup
+  lr_warmup_epochs: 2
+
+  # Gradient clipping
+  grad_clip_norm: 1.0
+
+  # Mixed precision (bfloat16)
+  use_amp: true

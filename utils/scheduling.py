@@ -1,37 +1,97 @@
+"""
+Schedule functions for CoralMonSter per-epoch training.
+
+All schedules are per-epoch (not per-step), as requested.
+
+  - sinusoidal_schedule()     — EMA momentum (α) from 0.996 → 1
+  - teacher_temp_schedule()   — teacher temperature (τ_t) from 0.04 → 0.07
+  - cosine_lr_lambda()        — LR: linear warmup → cosine decay to 0
+"""
+
+from __future__ import annotations
+
 import math
-import torch
+from typing import Callable
 
 
-def get_params_schedule_with_warmup(
-    optimizer,
-    num_training_steps: int,
-    num_warmup_steps: int,
-    min_lr: float = 0.0,
-):
+def sinusoidal_schedule(
+    epoch: int,
+    total_epochs: int,
+    start_value: float,
+    end_value: float,
+) -> float:
     """
-    Create a schedule with a learning rate that decreases following the
-    values of the cosine function between 0 and `pi * cycles` after a warmup
-    period during which it increases linearly between 0 and 1.
+    Sinusoidal schedule from start_value → end_value over total_epochs.
+
+    Uses sin(π/2 · progress) to ramp from start to end.
+    This matches the paper's "sinusoidal update" for EMA momentum (Table 1).
+    Also used for teacher temperature (τ_t).
+
+    Args:
+        epoch:        current epoch (0-indexed)
+        total_epochs: total number of training epochs
+        start_value:  value at epoch 0  (e.g. 0.996 for momentum)
+        end_value:    value at final epoch (e.g. 1.0 for momentum)
+
+    Returns:
+        Interpolated value for this epoch.
     """
+    if total_epochs <= 1:
+        return end_value
 
-    def lr_lambda(current_step):
-        if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
-        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-        return max(min_lr, 0.5 * (1.0 + math.cos(math.pi * progress)))
-
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    progress = min(epoch / (total_epochs - 1), 1.0)
+    # sin(0) = 0, sin(π/2) = 1 → smooth ramp from start to end
+    t = math.sin(math.pi / 2.0 * progress)
+    return start_value + (end_value - start_value) * t
 
 
-def cosine_scheduler(base_value, final_value, total_steps, warmup_steps=0, start_warmup_value=0):
-    import numpy as np
-    warmup_schedule = np.array([])
-    if warmup_steps > 0:
-        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_steps)
+def cosine_lr_lambda(
+    epoch: int,
+    total_epochs: int,
+    warmup_epochs: int,
+) -> float:
+    """
+    LR multiplier for cosine annealing with linear warmup.
 
-    iters = np.arange(total_steps - warmup_steps)
-    schedule = final_value + 0.5 * (base_value - final_value) * (1 + np.cos(np.pi * iters / len(iters)))
+    Paper Table 1: "Linear warmup from 0 to 1e-4 then sinusoidal update to 0"
 
-    schedule = np.concatenate((warmup_schedule, schedule))
-    assert len(schedule) == total_steps
-    return schedule
+    Phase 1 (epoch < warmup_epochs):
+        lr_mult = epoch / warmup_epochs  (linear ramp 0 → 1)
+
+    Phase 2 (epoch >= warmup_epochs):
+        lr_mult = 0.5 * (1 + cos(π · (epoch - warmup) / (total - warmup)))
+        This decays from 1 → 0 following a cosine curve.
+
+    Usage:
+        scheduler = LambdaLR(optimizer, lr_lambda=lambda e: cosine_lr_lambda(e, ...))
+
+    Args:
+        epoch:         current epoch (0-indexed)
+        total_epochs:  total training epochs
+        warmup_epochs: number of warmup epochs
+
+    Returns:
+        Multiplier in [0, 1] to apply to base LR.
+    """
+    if epoch < warmup_epochs:
+        # Linear warmup
+        return epoch / max(warmup_epochs, 1)
+    else:
+        # Cosine decay
+        progress = (epoch - warmup_epochs) / max(total_epochs - warmup_epochs, 1)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
+def build_lr_lambda(
+    total_epochs: int,
+    warmup_epochs: int,
+) -> Callable[[int], float]:
+    """
+    Build a LR lambda function for use with torch.optim.lr_scheduler.LambdaLR.
+
+    Returns:
+        A callable that maps epoch → lr_multiplier.
+    """
+    def lr_lambda(epoch: int) -> float:
+        return cosine_lr_lambda(epoch, total_epochs, warmup_epochs)
+    return lr_lambda
